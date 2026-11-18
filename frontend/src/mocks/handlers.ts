@@ -1,0 +1,547 @@
+/**
+ * MSW handlers mirroring the real backend (backend/openapi.json + its services):
+ * same paths, status codes, `{detail, code}` errors, `{message}` acknowledgements,
+ * staged hints, scoring and leaderboard rules. Keep in sync with the backend.
+ */
+import { delay, http, HttpResponse, type DefaultBodyType, type StrictRequest } from 'msw'
+import type {
+  CompletedGame,
+  Difficulty,
+  GameUpdateRequest,
+  LeaderboardEntry,
+  LeaderboardPeriod,
+  Me,
+  ScoresMe,
+  TokenResponse,
+} from '../api/types'
+import { DIFFICULTIES } from '../api/types'
+import {
+  HINT_COSTS,
+  computeScore,
+  db,
+  nextId,
+  randomToken,
+  saveDb,
+  toWireGame,
+  type MockGame,
+  type MockUser,
+} from './db'
+import { makePuzzle, mockHint } from './puzzles'
+
+const API = '*/api/v1'
+const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+const RESERVED = new Set(['admin', 'root', 'system', 'moderator', 'support', 'sudoku'])
+const GRID_RE = /^[0-9]{81}$/
+const REFRESH_COOKIE = 'refresh_token'
+const COOKIE_PATH = '/api/v1/auth'
+/** Same reply whether or not the account exists (no enumeration). */
+const ACCEPTED = 'If the address can receive email, a message is on its way.'
+
+let latency = 0
+/** Artificial latency for the browser dev server (tests use 0). */
+export function setMockLatency(ms: number): void {
+  latency = ms
+}
+
+function err(status: number, code: string, detail: string, headers?: Record<string, string>) {
+  return HttpResponse.json({ detail, code }, { status, headers })
+}
+
+/** Same shape as the backend's RequestValidationError handler: "loc: msg; loc: msg". */
+function validation(...parts: string[]) {
+  return err(422, 'validation_error', parts.join('; '))
+}
+
+const message = (text: string, status = 200) => HttpResponse.json({ message: text }, { status })
+
+async function json<T>(request: StrictRequest<DefaultBodyType>): Promise<Partial<T>> {
+  try {
+    return ((await request.json()) ?? {}) as Partial<T>
+  } catch {
+    return {}
+  }
+}
+
+function currentUser(request: Request): MockUser | null {
+  const header = request.headers.get('Authorization') ?? ''
+  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
+  const id = db.accessTokens[token]
+  return db.users.find((u) => u.id === id) ?? null
+}
+
+function unauthorized(request: Request) {
+  return request.headers.get('Authorization')
+    ? err(401, 'invalid_token', 'Invalid or expired access token')
+    : err(401, 'not_authenticated', 'Not authenticated')
+}
+
+const clearCookie = `${REFRESH_COOKIE}=; Path=${COOKIE_PATH}; Max-Age=0; HttpOnly; SameSite=Strict`
+
+function issueTokens(user: MockUser) {
+  const access = randomToken()
+  db.accessTokens[access] = user.id
+  const refresh = `mock.${user.id}.${randomToken()}`
+  const body: TokenResponse = {
+    access_token: access,
+    token_type: 'bearer',
+    expires_in: 900,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      email_verified: user.verified,
+      created_at: user.created_at,
+    },
+  }
+  return HttpResponse.json(body, {
+    headers: {
+      'Set-Cookie': `${REFRESH_COOKIE}=${refresh}; Path=${COOKIE_PATH}; HttpOnly; SameSite=Strict`,
+    },
+  })
+}
+
+function sendEmail(user: MockUser, kind: 'verify_email' | 'reset_password') {
+  const token = randomToken()
+  if (kind === 'verify_email') db.verifyTokens[token] = user.id
+  else db.resetTokens[token] = user.id
+  const path = kind === 'verify_email' ? 'verify-email' : 'reset-password'
+  const origin = typeof window === 'undefined' ? 'http://localhost:5173' : window.location.origin
+  const link = `${origin}/${path}?token=${token}`
+  db.outbox.push({ to: user.email, kind, token, link })
+  if (latency > 0) {
+    // Browser mock mode: the "email" is printed to the console.
+    console.info(`[mock email] ${kind} for ${user.email}: ${link}`)
+  }
+}
+
+function findGame(user: MockUser, id: string | readonly string[] | undefined): MockGame | null {
+  return db.games.find((g) => g.id === Number(id) && g.user_id === user.id) ?? null
+}
+
+const gameNotFound = () => err(404, 'not_found', 'Game not found')
+const notInProgress = () => err(409, 'game_not_in_progress', 'This game is no longer in progress')
+
+function periodStart(period: LeaderboardPeriod): number {
+  const now = Date.now()
+  if (period === 'day') return now - 86_400_000
+  if (period === 'week') return now - 7 * 86_400_000
+  return 0
+}
+
+type RankedEntry = LeaderboardEntry & { user_id: number; game_id: number }
+
+function rankedEntries(difficulty: Difficulty | null, period: LeaderboardPeriod): RankedEntry[] {
+  const since = periodStart(period)
+  const verified = new Map(db.users.filter((u) => u.verified).map((u) => [u.id, u]))
+  return db.games
+    .filter(
+      (g) =>
+        g.status === 'completed' &&
+        g.score !== null &&
+        (difficulty === null || g.difficulty === difficulty) &&
+        verified.has(g.user_id) &&
+        Date.parse(g.completed_at ?? '') >= since,
+    )
+    .sort(
+      (a, b) =>
+        (b.score ?? 0) - (a.score ?? 0) ||
+        Date.parse(a.completed_at ?? '') - Date.parse(b.completed_at ?? '') ||
+        a.id - b.id,
+    )
+    .map((g, i) => ({
+      rank: i + 1,
+      username: verified.get(g.user_id)!.username,
+      difficulty: g.difficulty,
+      score: g.score ?? 0,
+      elapsed_seconds: g.elapsed_seconds,
+      hints_used: g.hints_used,
+      completed_at: g.completed_at ?? '',
+      user_id: g.user_id,
+      game_id: g.id,
+    }))
+}
+
+const publicEntry = ({ user_id: _u, game_id: _g, ...entry }: RankedEntry): LeaderboardEntry => entry
+
+type DifficultyParam = { ok: true; value: Difficulty | null } | { ok: false }
+
+function parseDifficulty(value: string | null): DifficultyParam {
+  if (value === null || value === '') return { ok: true, value: null }
+  const found = DIFFICULTIES.find((d) => d === value)
+  return found ? { ok: true, value: found } : { ok: false }
+}
+
+function parsePeriod(value: string | null): LeaderboardPeriod | null {
+  if (value === null) return 'all'
+  return value === 'day' || value === 'week' || value === 'all' ? value : null
+}
+
+const badDifficulty = () =>
+  validation(
+    "query.difficulty: Input should be 'beginner', 'easy', 'medium', 'hard', 'expert', 'master' or 'extreme'",
+  )
+const badPeriod = () => validation("query.period: Input should be 'day', 'week' or 'all'")
+
+function userStats(user: MockUser): Me['stats'] {
+  const games = db.games.filter((g) => g.user_id === user.id)
+  const completed = games.filter((g) => g.status === 'completed')
+  const best: Record<string, number> = {}
+  for (const g of completed) best[g.difficulty] = Math.max(best[g.difficulty] ?? 0, g.score ?? 0)
+  return {
+    games_started: games.length,
+    games_completed: completed.length,
+    total_score: completed.reduce((sum, g) => sum + (g.score ?? 0), 0),
+    best_scores: best,
+  }
+}
+
+export const handlers = [
+  // Latency for the browser dev server; falls through to the real handler.
+  http.all(`${API}/*`, async () => {
+    if (latency) await delay(latency)
+  }),
+
+  http.get(`${API}/health`, () => HttpResponse.json({ status: 'ok', database: 'ok' })),
+
+  // ---------- auth ----------
+  http.post(`${API}/auth/register`, async ({ request }) => {
+    const body = await json<{ username: string; email: string; password: string }>(request)
+    const username = body.username ?? ''
+    const email = (body.email ?? '').trim().toLowerCase()
+    const password = body.password ?? ''
+    const problems: string[] = []
+    if (!USERNAME_RE.test(username))
+      problems.push("username: String should match pattern '^[A-Za-z0-9_]{3,20}$'")
+    if (!EMAIL_RE.test(email))
+      problems.push(
+        'email: value is not a valid email address: An email address must have an @-sign.',
+      )
+    if (password.length < 8) problems.push('password: String should have at least 8 characters')
+    if (problems.length) return validation(...problems)
+    if (RESERVED.has(username.toLowerCase()))
+      return err(422, 'username_not_allowed', 'This username is not allowed')
+    if (db.users.some((u) => u.username.toLowerCase() === username.toLowerCase()))
+      return err(409, 'username_taken', 'This username is already taken')
+    // An existing email gets the same 202 (no account enumeration).
+    if (!db.users.some((u) => u.email === email)) {
+      const user: MockUser = {
+        id: nextId(),
+        username,
+        email,
+        password,
+        verified: false,
+        created_at: new Date().toISOString(),
+        last_login_at: null,
+      }
+      db.users.push(user)
+      sendEmail(user, 'verify_email')
+      saveDb()
+    }
+    return message('Check your email to verify your address and finish signing up.', 202)
+  }),
+
+  http.post(`${API}/auth/verify-email`, async ({ request }) => {
+    const { token = '' } = await json<{ token: string }>(request)
+    const userId = db.verifyTokens[token]
+    const user = db.users.find((u) => u.id === userId)
+    if (!user) return err(400, 'invalid_token', 'This link is invalid or has expired')
+    Reflect.deleteProperty(db.verifyTokens, token)
+    user.verified = true
+    saveDb()
+    return message('Email verified. You can now log in.')
+  }),
+
+  http.post(`${API}/auth/resend-verification`, async ({ request }) => {
+    const { email = '' } = await json<{ email: string }>(request)
+    if (!EMAIL_RE.test(email.trim())) return validation('email: value is not a valid email address')
+    const user = db.users.find((u) => u.email === email.trim().toLowerCase())
+    if (user && !user.verified) sendEmail(user, 'verify_email')
+    saveDb()
+    return message(ACCEPTED, 202)
+  }),
+
+  http.post(`${API}/auth/forgot-password`, async ({ request }) => {
+    const { email = '' } = await json<{ email: string }>(request)
+    if (!EMAIL_RE.test(email.trim())) return validation('email: value is not a valid email address')
+    const user = db.users.find((u) => u.email === email.trim().toLowerCase())
+    if (user) sendEmail(user, 'reset_password')
+    saveDb()
+    return message(ACCEPTED, 202)
+  }),
+
+  http.post(`${API}/auth/reset-password`, async ({ request }) => {
+    const { token = '', new_password = '' } = await json<{ token: string; new_password: string }>(
+      request,
+    )
+    if (new_password.length < 8)
+      return validation('new_password: String should have at least 8 characters')
+    const user = db.users.find((u) => u.id === db.resetTokens[token])
+    if (!user) return err(400, 'invalid_token', 'This link is invalid or has expired')
+    Reflect.deleteProperty(db.resetTokens, token)
+    user.password = new_password
+    // Revoke every session of that user.
+    for (const [access, id] of Object.entries(db.accessTokens))
+      if (id === user.id) Reflect.deleteProperty(db.accessTokens, access)
+    saveDb()
+    return message('Password updated. Please log in again.')
+  }),
+
+  http.post(`${API}/auth/login`, async ({ request }) => {
+    const { email = '', password = '' } = await json<{ email: string; password: string }>(request)
+    const id = email.trim().toLowerCase()
+    // The backend accepts an email address or a username here.
+    const user = db.users.find((u) => u.email === id || u.username.toLowerCase() === id)
+    if (user?.password !== password)
+      return err(401, 'invalid_credentials', 'Incorrect email or password')
+    if (!user.verified)
+      return err(403, 'email_not_verified', 'Please verify your email address first')
+    user.last_login_at = new Date().toISOString()
+    saveDb()
+    return issueTokens(user)
+  }),
+
+  http.post(`${API}/auth/refresh`, ({ cookies }) => {
+    const raw = cookies[REFRESH_COOKIE]
+    const match = /^mock\.(\d+)\./.exec(raw ?? '')
+    const user = match ? db.users.find((u) => u.id === Number(match[1])) : undefined
+    if (!user)
+      return err(401, 'invalid_token', 'Session expired, please log in again', {
+        'Set-Cookie': clearCookie,
+      })
+    return issueTokens(user)
+  }),
+
+  http.post(`${API}/auth/logout`, ({ request }) => {
+    const token = (request.headers.get('Authorization') ?? '').slice(7)
+    Reflect.deleteProperty(db.accessTokens, token)
+    return HttpResponse.json({ message: 'Logged out.' }, { headers: { 'Set-Cookie': clearCookie } })
+  }),
+
+  http.get(`${API}/me`, ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const body: Me = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      email_verified: user.verified,
+      created_at: user.created_at,
+      last_login_at: user.last_login_at,
+      stats: userStats(user),
+    }
+    return HttpResponse.json(body)
+  }),
+
+  // ---------- games ----------
+  http.post(`${API}/games`, async ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const { difficulty } = await json<{ difficulty: Difficulty }>(request)
+    const level = parseDifficulty(difficulty ?? null)
+    if (!level.ok || level.value === null)
+      return validation(
+        "difficulty: Input should be 'beginner', 'easy', 'medium', 'hard', 'expert', 'master' or 'extreme'",
+      )
+    for (const g of db.games)
+      if (g.user_id === user.id && g.status === 'in_progress') g.status = 'abandoned'
+    const id = nextId()
+    const puzzle = makePuzzle(level.value, id * 7919)
+    const now = new Date().toISOString()
+    const game: MockGame = {
+      id,
+      user_id: user.id,
+      difficulty: level.value,
+      status: 'in_progress',
+      givens: puzzle.givens,
+      solution: puzzle.solution,
+      current: puzzle.givens,
+      notes: {},
+      elapsed_seconds: 0,
+      hints_used: 0,
+      hint_stages: [],
+      mistakes: 0,
+      score: null,
+      version: 1,
+      started_at: now,
+      updated_at: now,
+      completed_at: null,
+    }
+    db.games.push(game)
+    saveDb()
+    return HttpResponse.json(toWireGame(game), { status: 201 })
+  }),
+
+  http.get(`${API}/games/current`, ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const game = db.games.find((g) => g.user_id === user.id && g.status === 'in_progress')
+    if (!game) return err(404, 'not_found', 'In-progress game not found')
+    return HttpResponse.json(toWireGame(game))
+  }),
+
+  http.get(`${API}/games/:id`, ({ request, params }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const game = findGame(user, params.id)
+    if (!game) return gameNotFound()
+    return HttpResponse.json(toWireGame(game))
+  }),
+
+  http.patch(`${API}/games/:id`, async ({ request, params }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const body = await json<GameUpdateRequest>(request)
+    const current = body.current ?? ''
+    if (!GRID_RE.test(current))
+      return validation("current: String should match pattern '^[0-9]{81}$'")
+    if (typeof body.version !== 'number') return validation('version: Field required')
+    const game = findGame(user, params.id)
+    if (!game) return gameNotFound()
+    if (game.status !== 'in_progress') return notInProgress()
+    if ([...game.givens].some((g, i) => g !== '0' && current[i] !== g))
+      return err(422, 'givens_modified', 'Given cells cannot be changed')
+    if (body.version !== game.version)
+      return err(409, 'version_conflict', 'The game was changed elsewhere; reload and try again')
+    game.current = current
+    game.notes = Object.fromEntries(
+      Object.entries(body.notes ?? {})
+        .filter(([, digits]) => digits.length > 0)
+        .map(([k, digits]) => [k, [...new Set(digits)].sort((a, b) => a - b)]),
+    )
+    game.elapsed_seconds = Math.max(game.elapsed_seconds, Math.floor(body.elapsed_seconds ?? 0))
+    game.version += 1
+    game.updated_at = new Date().toISOString()
+    saveDb()
+    return HttpResponse.json(toWireGame(game))
+  }),
+
+  http.post(`${API}/games/:id/hint`, async ({ request, params }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const { stage } = await json<{ stage: number }>(request)
+    if (stage !== 1 && stage !== 2 && stage !== 3)
+      return validation('stage: Input should be 1, 2 or 3')
+    const game = findGame(user, params.id)
+    if (!game) return gameNotFound()
+    if (game.status !== 'in_progress') return notInProgress()
+    const hint = mockHint(game.current, game.solution, stage, HINT_COSTS[stage])
+    if (!hint) return err(409, 'no_hint_available', 'The board is already solved')
+    game.hints_used += 1
+    game.hint_stages.push(stage)
+    saveDb()
+    return HttpResponse.json(hint)
+  }),
+
+  http.post(`${API}/games/:id/check`, ({ request, params }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const game = findGame(user, params.id)
+    if (!game) return gameNotFound()
+    if (game.status !== 'in_progress') return notInProgress()
+    const wrong = [...game.current].flatMap((v, i) =>
+      v !== '0' && v !== game.solution[i] ? [i] : [],
+    )
+    game.mistakes += wrong.length
+    saveDb()
+    return HttpResponse.json({ wrong_cells: wrong, mistakes: game.mistakes })
+  }),
+
+  http.post(`${API}/games/:id/complete`, ({ request, params }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const game = findGame(user, params.id)
+    if (!game) return gameNotFound()
+    if (game.status !== 'in_progress') return notInProgress()
+    if (game.current !== game.solution)
+      return err(422, 'board_not_solved', 'The board is not correctly solved yet')
+    const breakdown = computeScore(game)
+    const now = new Date().toISOString()
+    game.status = 'completed'
+    game.completed_at = now
+    game.updated_at = now
+    game.score = breakdown.total
+    game.version += 1
+    saveDb()
+    const body: CompletedGame = { ...toWireGame(game), score_breakdown: breakdown }
+    return HttpResponse.json(body)
+  }),
+
+  // ---------- scores ----------
+  http.get(`${API}/scores/me`, ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const url = new URL(request.url)
+    const limit = Number(url.searchParams.get('limit') ?? 50)
+    const offset = Number(url.searchParams.get('offset') ?? 0)
+    const mine = db.games.filter((g) => g.user_id === user.id)
+    const completed = mine
+      .filter((g) => g.status === 'completed')
+      .sort(
+        (a, b) =>
+          (b.score ?? 0) - (a.score ?? 0) ||
+          Date.parse(a.completed_at ?? '') - Date.parse(b.completed_at ?? ''),
+      )
+    const best: ScoresMe['best'] = []
+    for (const d of DIFFICULTIES) {
+      const g = completed.find((x) => x.difficulty === d)
+      if (g)
+        best.push({
+          game_id: g.id,
+          difficulty: d,
+          score: g.score ?? 0,
+          elapsed_seconds: g.elapsed_seconds,
+          hints_used: g.hints_used,
+          completed_at: g.completed_at ?? '',
+        })
+    }
+    const history: ScoresMe['history'] = mine
+      .slice()
+      .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at) || b.id - a.id)
+      .slice(offset, offset + limit)
+      .map((g) => ({
+        game_id: g.id,
+        difficulty: g.difficulty,
+        status: g.status,
+        score: g.score,
+        elapsed_seconds: g.elapsed_seconds,
+        hints_used: g.hints_used,
+        mistakes: g.mistakes,
+        started_at: g.started_at,
+        completed_at: g.completed_at,
+      }))
+    return HttpResponse.json({ best, history })
+  }),
+
+  http.get(`${API}/leaderboard`, ({ request }) => {
+    const url = new URL(request.url)
+    const difficulty = parseDifficulty(url.searchParams.get('difficulty'))
+    if (!difficulty.ok) return badDifficulty()
+    const period = parsePeriod(url.searchParams.get('period'))
+    if (!period) return badPeriod()
+    const limit = Number(url.searchParams.get('limit') ?? 20)
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      return validation('query.limit: Input should be less than or equal to 100')
+    const entries = rankedEntries(difficulty.value, period).slice(0, limit).map(publicEntry)
+    return HttpResponse.json({ difficulty: difficulty.value, period, entries })
+  }),
+
+  http.get(`${API}/leaderboard/me`, ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const url = new URL(request.url)
+    const difficulty = parseDifficulty(url.searchParams.get('difficulty'))
+    if (!difficulty.ok) return badDifficulty()
+    const period = parsePeriod(url.searchParams.get('period'))
+    if (!period) return badPeriod()
+    const ranked = rankedEntries(difficulty.value, period)
+    const mine = ranked.find((e) => e.user_id === user.id)
+    return HttpResponse.json({
+      difficulty: difficulty.value,
+      period,
+      rank: mine ? mine.rank : null,
+      total: ranked.length,
+      entry: mine ? publicEntry(mine) : null,
+    })
+  }),
+]

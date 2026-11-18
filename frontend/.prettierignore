@@ -1,0 +1,7 @@
+dist
+coverage
+playwright-report
+test-results
+public/mockServiceWorker.js
+src/api/schema.gen.ts
+package-lock.json

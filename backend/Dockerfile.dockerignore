@@ -1,0 +1,23 @@
+# BuildKit uses this file automatically for backend/Dockerfile (context = repo root),
+# taking precedence over a root .dockerignore. Allow-list: only what the image needs.
+*
+
+!pyproject.toml
+!uv.lock
+
+!validator/pyproject.toml
+!validator/src/
+!generator/pyproject.toml
+!generator/src/
+
+!backend/pyproject.toml
+!backend/src/
+!backend/alembic.ini
+!backend/alembic/
+!backend/docker-entrypoint.sh
+
+**/__pycache__
+**/*.py[cod]
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache

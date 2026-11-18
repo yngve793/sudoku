@@ -1,0 +1,13 @@
+[project]
+name = "sudoku-validator"
+version = "0.1.0"
+description = "Sudoku solver, difficulty rater, hint engine and puzzle validator"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sudoku_validator"]

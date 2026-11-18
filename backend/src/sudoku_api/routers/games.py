@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+import logging
+from functools import partial
+from typing import Annotated
+
+from fastapi import APIRouter, Body, Depends, status
+from fastapi.concurrency import run_in_threadpool
+
+from sudoku_api.deps import CurrentUserDep, DbDep, PuzzleGeneratorDep, SettingsDep
+from sudoku_api.domain import Difficulty, GameStatus
+from sudoku_api.models import Game
+from sudoku_api.ratelimit import hint_rate_limit
+from sudoku_api.schemas.common import error_responses
+from sudoku_api.schemas.game import (
+    CheckIn,
+    CheckOut,
+    CompletedGameOut,
+    GameOut,
+    GameUpdateIn,
+    HintCosts,
+    HintIn,
+    HintOut,
+    NewGameIn,
+    ScoreBreakdownOut,
+)
+from sudoku_api.services import games as game_service
+from sudoku_api.services.games import BoardUpdate
+from sudoku_api.services.puzzle_source import PuzzleSourceError
+from sudoku_api.services.scoring import hint_cost
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/games", tags=["games"], responses=error_responses(401, 422))
+
+
+def game_out(game: Game) -> GameOut:
+    """Map an ORM game to the public shape. The solution is never copied."""
+    return GameOut(
+        id=game.id,
+        difficulty=Difficulty(game.puzzle.difficulty),
+        status=GameStatus(game.status),
+        givens=game.puzzle.givens,
+        current=game.current,
+        notes=game.notes or {},
+        elapsed_seconds=game.elapsed_seconds,
+        hints_used=game.hints_used,
+        mistakes=game.mistakes,
+        score=game.score,
+        version=game.version,
+        started_at=game.started_at,
+        updated_at=game.updated_at,
+        completed_at=game.completed_at,
+        hint_costs=HintCosts.model_validate({str(s): hint_cost(s) for s in (1, 2, 3)}),
+    )
+
+
+def _update(body: GameUpdateIn) -> BoardUpdate:
+    return BoardUpdate(
+        current=body.current,
+        notes=body.notes,
+        elapsed_seconds=body.elapsed_seconds,
+        version=body.version,
+    )
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    response_model=GameOut,
+    responses=error_responses(503),
+    summary="Start a new game (abandons the current in-progress game, if any)",
+)
+async def create_game(
+    body: NewGameIn,
+    db: DbDep,
+    user: CurrentUserDep,
+    generator: PuzzleGeneratorDep,
+    settings: SettingsDep,
+) -> GameOut:
+    # DB work runs in the threadpool; generation runs in the generator's process pool.
+    game = await run_in_threadpool(game_service.create_game, db, user, body.difficulty)
+    if game is None:  # pool empty for this level: generate synchronously, with a timeout
+        try:
+            candidate = await generator.get(body.difficulty, settings.generation_timeout_seconds)
+        except PuzzleSourceError as exc:
+            logger.warning("synchronous generation failed for %s: %s", body.difficulty, exc)
+            raise game_service.puzzle_unavailable() from None
+        game = await run_in_threadpool(
+            partial(
+                game_service.create_game,
+                db,
+                user,
+                body.difficulty,
+                candidate=candidate,
+                generator_version=generator.source.generator_version,
+            )
+        )
+        assert game is not None
+    return game_out(game)
+
+
+@router.get(
+    "/current",
+    response_model=GameOut,
+    responses=error_responses(404),
+    summary="The in-progress game, to resume",
+)
+def current_game(db: DbDep, user: CurrentUserDep) -> GameOut:
+    return game_out(game_service.get_current_game(db, user))
+
+
+@router.get(
+    "/{game_id}",
+    response_model=GameOut,
+    responses=error_responses(404),
+    summary="Game state (owner only)",
+)
+def get_game(game_id: int, db: DbDep, user: CurrentUserDep) -> GameOut:
+    return game_out(game_service.get_game(db, user, game_id))
+
+
+@router.patch(
+    "/{game_id}",
+    response_model=GameOut,
+    responses=error_responses(404, 409),
+    summary="Autosave board, notes and timer (optimistic lock on `version`)",
+)
+def save_game(game_id: int, body: GameUpdateIn, db: DbDep, user: CurrentUserDep) -> GameOut:
+    return game_out(game_service.save_game(db, user, game_id, _update(body)))
+
+
+@router.post(
+    "/{game_id}/hint",
+    response_model=HintOut,
+    responses=error_responses(404, 409, 429),
+    dependencies=[Depends(hint_rate_limit)],
+    summary="Next hint at stage 1 (technique + region), 2 (cells) or 3 (value)",
+)
+def hint(game_id: int, body: HintIn, db: DbDep, user: CurrentUserDep) -> HintOut:
+    staged = game_service.hint_for_game(db, user, game_id, body.stage, body.current)
+    return HintOut(
+        kind=staged.kind,
+        stage=body.stage,
+        technique=staged.technique,
+        cells=staged.cells,
+        value=staged.value,
+        explanation=staged.explanation,
+        penalty=staged.penalty,
+    )
+
+
+@router.post(
+    "/{game_id}/check",
+    response_model=CheckOut,
+    responses=error_responses(404, 409),
+    summary="Indices of wrong cells; each wrong cell counts as a mistake",
+)
+def check(
+    game_id: int,
+    db: DbDep,
+    user: CurrentUserDep,
+    body: Annotated[CheckIn | None, Body()] = None,
+) -> CheckOut:
+    wrong, game = game_service.check_game(db, user, game_id, body.current if body else None)
+    return CheckOut(wrong_cells=wrong, mistakes=game.mistakes)
+
+
+@router.post(
+    "/{game_id}/complete",
+    response_model=CompletedGameOut,
+    responses=error_responses(404, 409),
+    summary="Verify the solved board server-side and store the computed score",
+    description=(
+        "Optionally include the final board (same shape as PATCH) to save and complete in one "
+        "call. Any client-sent score is ignored; the score is computed on the server."
+    ),
+)
+def complete(
+    game_id: int,
+    db: DbDep,
+    user: CurrentUserDep,
+    body: Annotated[GameUpdateIn | None, Body()] = None,
+) -> CompletedGameOut:
+    game, breakdown = game_service.complete_game(db, user, game_id, _update(body) if body else None)
+    return CompletedGameOut(
+        **game_out(game).model_dump(by_alias=True),
+        score_breakdown=ScoreBreakdownOut(
+            base=breakdown.base,
+            par_seconds=breakdown.par_seconds,
+            time_factor=breakdown.time_factor,
+            hint_penalty=breakdown.hint_penalty,
+            mistake_penalty=breakdown.mistake_penalty,
+            total=breakdown.total,
+        ),
+    )
