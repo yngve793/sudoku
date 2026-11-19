@@ -4,7 +4,7 @@
 #
 #   Vite dev server (HMR):  http://localhost:5173   (proxies /api to the api)
 #   API + docs:             http://localhost:8000/docs   (127.0.0.1 only)
-#   Postgres:               localhost:5432               (127.0.0.1 only)
+#   Postgres:               localhost:5432   (published by docker-compose.yml, 127.0.0.1 only)
 #   nginx build:            http://localhost:8080        (still available, built SPA)
 #
 # - The api runs `uvicorn --reload` against the bind-mounted validator/generator/backend
@@ -15,11 +15,6 @@
 name: sudoku
 
 services:
-  postgres:
-    ports:
-      - "127.0.0.1:5432:5432"
-    networks: [backend, devhost]
-
   api:
     environment:
       PYTHONPATH: /src/backend/src:/src/generator/src:/src/validator/src
@@ -74,7 +69,3 @@ services:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
     restart: unless-stopped
-
-networks:
-  # Non-internal network so dev ports on postgres/api can be published to the host.
-  devhost:

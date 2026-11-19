@@ -4,6 +4,8 @@ The backend never implements Sudoku logic itself; every call goes through this m
 
 * `validate_puzzle`, `find_errors`, `next_hint`, `rate`, `parse`, `format_grid` and
   `cell_name` are the real `sudoku_validator` implementations (PLAN.md §5.1).
+* `propagate` and `find_contradiction` (with `Propagation`, `Placement`, `Contradiction`)
+  are the validator's constraint-only search-mode helpers (PLAN.md §5.5).
 * `generate`, `Puzzle`, `Symmetry` and `GenerationError` are the real `sudoku_generator`
   API (PLAN.md §5.2). `GENERATOR_VERSION` is the installed package version.
 """
@@ -16,15 +18,20 @@ import sudoku_generator as sg
 import sudoku_validator as sv
 from sudoku_generator import GenerationError, Puzzle, Symmetry
 from sudoku_validator import (
+    Contradiction,
     Grid,
     Hint,
+    Placement,
+    Propagation,
     Rating,
     Step,
     ValidationReport,
     cell_name,
+    find_contradiction,
     find_errors,
     format_grid,
     next_hint,
+    propagate,
     rate,
 )
 
@@ -35,20 +42,25 @@ GRID_SIZE = 81
 
 __all__ = [
     "GENERATOR_VERSION",
+    "Contradiction",
     "GenerationError",
     "Grid",
     "Hint",
+    "Placement",
+    "Propagation",
     "Puzzle",
     "Rating",
     "Step",
     "Symmetry",
     "ValidationReport",
     "cell_name",
+    "find_contradiction",
     "find_errors",
     "format_grid",
     "generate",
     "next_hint",
     "parse",
+    "propagate",
     "rate",
     "rated_difficulty",
     "validate_puzzle",

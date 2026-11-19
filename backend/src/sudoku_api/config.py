@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     refresh_rate_limit: str = "60/minute"
     email_rate_limit: str = "3/hour"  # per e-mail address for resend / forgot-password
     hint_rate_limit: str = "30/minute"
+    search_rate_limit: str = "120/minute"  # POST /games/{id}/search/propagate
 
     # Email
     email_backend: Literal["smtp", "console"] = "console"

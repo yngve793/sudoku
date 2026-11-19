@@ -70,6 +70,19 @@ export type Hint = Schemas['HintOut']
 export type HintStage = Hint['stage']
 export type CheckResponse = Schemas['CheckOut']
 
+// ---------- search mode (PLAN.md §5.5) ----------
+export type SearchTree = Schemas['SearchTree']
+export type SearchNode = Schemas['SearchNode']
+export type SearchChoice = Schemas['SearchChoice']
+export type SearchPlacement = Schemas['SearchPlacement']
+export type SearchMode = SearchTree['mode']
+export type SearchNodeStatus = SearchNode['status']
+export type SearchCosts = Schemas['SearchCosts']
+export type Contradiction = Schemas['Contradiction']
+export type ContradictionKind = Contradiction['kind']
+export type PropagateResponse = Schemas['PropagateOut']
+export type PropagatePlacement = Schemas['PropagationPlacementOut']
+
 // ---------- scores / leaderboard ----------
 export type ScoresMe = Schemas['ScoresMeOut']
 export type BestScore = Schemas['BestScore']

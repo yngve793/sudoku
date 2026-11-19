@@ -24,6 +24,7 @@ EXPECTED = {
     ("get", "/api/v1/games/{game_id}"),
     ("patch", "/api/v1/games/{game_id}"),
     ("post", "/api/v1/games/{game_id}/hint"),
+    ("post", "/api/v1/games/{game_id}/search/propagate"),
     ("post", "/api/v1/games/{game_id}/check"),
     ("post", "/api/v1/games/{game_id}/complete"),
     ("get", "/api/v1/scores/me"),

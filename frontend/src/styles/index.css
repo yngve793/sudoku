@@ -29,6 +29,9 @@
   --cell-selected: #b9c3f8;
   --cell-hint: #fff0bf;
   --cell-hint-ring: #8a6100;
+  --search-choice: #a13d00;
+  --search-auto: #0b6b5d;
+  --cell-contradiction: #fde7e5;
 
   --danger: #b3261e;
   --danger-soft: #fde7e5;
@@ -76,6 +79,9 @@
   --cell-selected: #3a4685;
   --cell-hint: #3a3112;
   --cell-hint-ring: #e8bf55;
+  --search-choice: #ffb27a;
+  --search-auto: #6fd8c6;
+  --cell-contradiction: #4a1f1f;
 
   --danger: #ff8f86;
   --danger-soft: #3d1b1b;
@@ -118,6 +124,9 @@
     --cell-selected: #3a4685;
     --cell-hint: #3a3112;
     --cell-hint-ring: #e8bf55;
+    --search-choice: #ffb27a;
+    --search-auto: #6fd8c6;
+    --cell-contradiction: #4a1f1f;
     --danger: #ff8f86;
     --danger-soft: #3d1b1b;
     --success: #7fd69a;
@@ -1830,4 +1839,700 @@ kbd {
 .breakdown__total th {
   color: var(--text);
   font-weight: 700;
+}
+
+/* ==========================================================================
+   Search mode (PLAN.md §5.5)
+   ========================================================================== */
+.controls:has(> :nth-child(7)) {
+  grid-template-columns: repeat(7, 1fr);
+}
+
+@media (min-width: 900px) {
+  .controls:has(> :nth-child(7)) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.search-banner {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.search-banner strong {
+  color: var(--text);
+}
+
+.search-banner__tag {
+  display: inline-block;
+  margin-right: 0.25rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--search-choice);
+  color: var(--surface);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.board--search {
+  border-color: var(--search-choice);
+  border-style: double;
+  border-width: 4px;
+}
+
+/* Choice (guess) cells: the digit sits in an outlined box. */
+.cell--choice .cell__value {
+  padding: 0.05em 0.22em;
+  border: 2px solid var(--search-choice);
+  border-radius: 6px;
+  color: var(--search-choice);
+  font-weight: 700;
+}
+
+.cell--choice.cell--own .cell__value {
+  border-width: 3px;
+}
+
+/* Manual placements look like normal entries. */
+.cell--manual .cell__value {
+  color: var(--user);
+}
+
+/* Auto placements: distinct colour, italic and a dotted underline. */
+.cell--auto .cell__value {
+  color: var(--search-auto);
+  font-style: italic;
+  text-decoration: underline dotted;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.15em;
+}
+
+.cell--step {
+  outline: 3px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+.cell--contradiction {
+  background: var(--cell-contradiction);
+  box-shadow: inset 0 0 0 2px var(--danger);
+}
+
+.cell--contradiction.cell--selected {
+  background: color-mix(in srgb, var(--cell-contradiction) 55%, var(--cell-selected));
+}
+
+.game__layout--search .game__side {
+  width: min(100%, 560px);
+}
+
+/* Mobile: keep the digits right under the board, the tree below them. */
+@media (max-width: 899px) {
+  .game__layout--search .numpad {
+    order: -1;
+  }
+
+  .search-graph__svg {
+    height: 220px;
+  }
+}
+
+@media (min-width: 900px) {
+  .game__layout--search {
+    grid-template-columns: minmax(0, 520px) minmax(320px, 440px);
+  }
+}
+
+@media (min-width: 1200px) {
+  .game__layout--search {
+    grid-template-columns: minmax(0, 560px) minmax(420px, 560px);
+  }
+}
+
+.search-panel {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 2px solid var(--search-choice);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.search-panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.search-panel__title {
+  font-size: 1.05rem;
+}
+
+.search-panel__subtitle {
+  font-size: 0.95rem;
+}
+
+.search-panel__mode {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.search-panel__node,
+.search-panel__cost,
+.search-panel__prompt {
+  font-size: 0.9rem;
+}
+
+.search-panel__cost {
+  color: var(--text-muted);
+}
+
+.search-panel__busy {
+  font-style: italic;
+}
+
+.search-panel__prompt {
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--text);
+}
+
+.search-panel__error {
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.search-panel__confirm {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  font-size: 0.9rem;
+}
+
+.search-panel__row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.search-panel__graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.search-status {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4em;
+  height: 1.4em;
+  border-radius: 999px;
+  font-weight: 800;
+  border: 1px solid currentColor;
+}
+
+.search-status--dead {
+  color: var(--danger);
+}
+
+.search-status--solved {
+  color: var(--success);
+}
+
+.search-status--open {
+  color: var(--text-muted);
+}
+
+.search-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.search-actions .is-active {
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Graph */
+.search-graph {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.search-graph__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.search-graph__tools .icon-button {
+  width: 34px;
+  height: 34px;
+  font-size: 1.1rem;
+}
+
+.search-graph__count {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.search-graph__svg {
+  display: block;
+  width: 100%;
+  height: 260px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.search-graph__svg:active {
+  cursor: grabbing;
+}
+
+@media (min-width: 900px) {
+  .search-graph__svg {
+    height: 400px;
+  }
+}
+
+.search-graph__help {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.search-graph__edge {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.6;
+}
+
+.search-graph__edge--dead {
+  stroke-dasharray: 4 3;
+  opacity: 0.45;
+}
+
+.search-graph__arrow {
+  fill: var(--border-strong);
+}
+
+.graph-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.graph-node__box {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.graph-node--root .graph-node__box {
+  fill: var(--accent-soft);
+}
+
+/* Guess: bold label inside a double border. */
+.graph-node--guess .graph-node__box {
+  stroke-width: 1.5;
+}
+
+.graph-node__inner {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.2;
+  pointer-events: none;
+}
+
+.graph-node--guess .graph-node__label,
+.graph-node--root .graph-node__label {
+  font-weight: 800;
+}
+
+/* Manual placement: plain solid border, normal weight. */
+.graph-node--manual .graph-node__label {
+  font-weight: 500;
+}
+
+/* Auto placement: dashed border, italic label, distinct colour. */
+.graph-node--auto .graph-node__box {
+  stroke: var(--search-auto);
+  stroke-dasharray: 4 3;
+}
+
+.graph-node--auto .graph-node__label {
+  font-style: italic;
+  font-weight: 500;
+  fill: var(--search-auto);
+}
+
+.graph-node__summary rect {
+  fill: var(--surface-2);
+  stroke: var(--border-strong);
+}
+
+.graph-node__summary text {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.search-graph__svg--overview .graph-node__toggle,
+.search-graph__svg--overview .graph-node__check,
+.search-graph__svg--overview .graph-node__summary {
+  display: none;
+}
+
+.graph-node__label {
+  fill: var(--text);
+  stroke: var(--surface);
+  stroke-width: 3px;
+  paint-order: stroke;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  pointer-events: none;
+}
+
+.graph-node--selected .graph-node__box {
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  stroke-dasharray: none;
+  fill: var(--accent-soft);
+}
+
+.graph-node--selected .graph-node__inner {
+  stroke: var(--accent);
+}
+
+.graph-node--selected .graph-node__label {
+  font-weight: 800;
+}
+
+.graph-node:focus-visible .graph-node__box {
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: 5 3;
+}
+
+.graph-node--dead .graph-node__box {
+  stroke: var(--danger);
+}
+
+.graph-node--dead.graph-node--selected .graph-node__box {
+  stroke: var(--accent);
+}
+
+.graph-node--dead .graph-node__label {
+  fill: var(--text-muted);
+}
+
+.graph-node__cross {
+  stroke: var(--danger);
+  stroke-width: 2.5;
+  opacity: 0.85;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.graph-node--under-dead {
+  opacity: 0.5;
+}
+
+.graph-node--solved .graph-node__box {
+  stroke: var(--success);
+  stroke-width: 2.5;
+  fill: var(--success-soft);
+}
+
+.graph-node__check {
+  fill: var(--success);
+  font-size: 18px;
+  font-weight: 800;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  paint-order: stroke;
+}
+
+.graph-node__toggle circle {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+}
+
+.graph-node__toggle text {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (forced-colors: active) {
+  .cell--choice .cell__value {
+    border-color: CanvasText;
+  }
+
+  .graph-node__cross {
+    stroke: CanvasText;
+  }
+}
+
+/* Search graph: compact chain cards (default layout) */
+.search-graph__layout {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.search-graph__svg--tall {
+  height: calc(100vh - 260px);
+  min-height: 360px;
+}
+
+.chain-card__frame {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.chain-card--dead .chain-card__frame {
+  stroke: var(--danger);
+  stroke-dasharray: 5 3;
+}
+
+.chain-card__more {
+  cursor: pointer;
+}
+
+.chain-card__more rect {
+  fill: var(--surface-2);
+  stroke: var(--border);
+  stroke-dasharray: 3 2;
+}
+
+.chain-card__more text {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.graph-row {
+  cursor: pointer;
+  outline: none;
+}
+
+.graph-row__hit {
+  fill: transparent;
+  stroke: none;
+}
+
+.graph-row__label {
+  font-size: 12px;
+}
+
+.graph-row__bar {
+  stroke: var(--border-strong);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.graph-row.graph-node--guess .graph-row__bar,
+.graph-row.graph-node--root .graph-row__bar {
+  stroke: var(--search-choice);
+  stroke-width: 4;
+}
+
+.graph-row.graph-node--auto .graph-row__bar {
+  stroke: var(--search-auto);
+  stroke-dasharray: 2 2;
+  stroke-linecap: butt;
+}
+
+.graph-row__rule {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+.graph-row.graph-node--selected .graph-row__hit {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.graph-row:focus-visible .graph-row__hit {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 4 2;
+}
+
+.graph-row.graph-node--dead .graph-row__label {
+  fill: var(--danger);
+}
+
+.graph-row__cross {
+  stroke-width: 2.5;
+}
+
+.graph-row__check {
+  font-size: 14px;
+}
+
+.graph-row__summary {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--text);
+}
+
+.search-graph__svg--overview .graph-row__bar,
+.search-graph__svg--overview .chain-card__more text {
+  display: none;
+}
+
+.search-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.search-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.search-legend__swatch {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.5px solid var(--border-strong);
+}
+
+.search-legend__swatch--guess {
+  border: 3px double var(--border-strong);
+}
+
+.search-legend__swatch--auto {
+  border: 1.5px dashed var(--search-auto);
+}
+
+.search-legend__mark {
+  font-weight: 800;
+}
+
+.search-legend__mark--dead {
+  color: var(--danger);
+}
+
+.search-legend__mark--solved {
+  color: var(--success);
+}
+
+/* Tree page (/game/:id/tree) */
+.tree-page {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tree-page__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.tree-page__title {
+  font-size: 1.3rem;
+}
+
+.tree-page__status {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.tree-page__status--live span {
+  color: var(--success);
+}
+
+.tree-page__layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.tree-page__side {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+@media (min-width: 900px) {
+  .tree-page__layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    align-items: start;
+  }
+}
+
+.tree-summary,
+.tree-actions {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 0.9rem;
+}
+
+.tree-summary__status {
+  font-weight: 600;
+}
+
+.tree-summary__cost,
+.tree-actions__hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.tree-actions__title {
+  font-size: 1rem;
+}
+
+.tree-actions__picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tree-actions__picker .field__input {
+  min-width: 4.5rem;
+}
+
+.tree-actions__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.tree-page__empty {
+  color: var(--text-muted);
 }

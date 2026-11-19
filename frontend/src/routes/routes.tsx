@@ -8,6 +8,7 @@ import { VerifyEmailPage } from '../features/auth/VerifyEmailPage'
 import { GamePage } from '../features/game/GamePage'
 import { HomePage } from '../features/home/HomePage'
 import { LeaderboardPage } from '../features/scores/LeaderboardPage'
+import { TreePage } from '../features/search/TreePage'
 import { Layout } from './Layout'
 import { NotFoundPage } from './NotFoundPage'
 import { RequireAuth } from './RequireAuth'
@@ -29,6 +30,15 @@ export const routes: RouteObject[] = [
         element: (
           <RequireAuth>
             <GamePage />
+          </RequireAuth>
+        ),
+      },
+      {
+        // Full-screen search tree, synced with the game tab (PLAN.md §5.5).
+        path: 'game/:gameId/tree',
+        element: (
+          <RequireAuth>
+            <TreePage />
           </RequireAuth>
         ),
       },

@@ -42,6 +42,14 @@ describe('keyToCommand', () => {
     expect(key('r')).toEqual({ type: 'redo' })
   })
 
+  it('maps search-mode keys', () => {
+    expect(key('s')).toEqual({ type: 'search' })
+    expect(key('S', { shiftKey: true })).toEqual({ type: 'search' })
+    expect(key('g')).toEqual({ type: 'guess' })
+    expect(key('b')).toEqual({ type: 'branch' })
+    expect(key('Escape')).toEqual({ type: 'cancel' })
+  })
+
   it('maps undo/redo shortcuts', () => {
     expect(key('z', { ctrlKey: true })).toEqual({ type: 'undo' })
     expect(key('z', { metaKey: true, shiftKey: true })).toEqual({ type: 'redo' })

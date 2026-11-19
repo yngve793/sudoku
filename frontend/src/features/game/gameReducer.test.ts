@@ -352,3 +352,55 @@ describe('selectors', () => {
     expect(isBoardComplete(load(broken))).toBe(false)
   })
 })
+
+describe('applyPlacements (search "Apply branch")', () => {
+  it('places every digit as one undoable step', () => {
+    // r1c3 = 4, r1c4 = 6, r1c6 = 8 (all empty in GIVENS); notes in peers are cleaned.
+    const before = load(GIVENS, { '5': [4, 8], '11': [4, 9] })
+    const s = run(before, {
+      type: 'applyPlacements',
+      placements: [
+        { cell: 2, value: 4 },
+        { cell: 3, value: 6 },
+        { cell: 5, value: 8 },
+      ],
+    })
+    expect([s.cells[2], s.cells[3], s.cells[5]]).toEqual([4, 6, 8])
+    expect(s.notes[5]).toEqual([])
+    expect(s.notes[11]).toEqual([9])
+    expect(s.selected).toBe(5)
+    expect(s.dirty).toBe(true)
+    expect(s.past).toHaveLength(1)
+    const undone = run(s, { type: 'undo' })
+    expect(undone.cells).toEqual(before.cells)
+    expect(undone.notes).toEqual(before.notes)
+    expect(run(undone, { type: 'redo' }).cells).toEqual(s.cells)
+  })
+
+  it('skips givens, invalid entries and unchanged cells; no-op if nothing changes', () => {
+    const s = load()
+    expect(
+      run(s, {
+        type: 'applyPlacements',
+        placements: [
+          { cell: GIVEN, value: 9 },
+          { cell: 2, value: 0 },
+          { cell: 99, value: 1 },
+        ],
+      }),
+    ).toBe(s)
+    const once = run(s, { type: 'applyPlacements', placements: [{ cell: 2, value: 4 }] })
+    expect(run(once, { type: 'applyPlacements', placements: [{ cell: 2, value: 4 }] })).toBe(once)
+  })
+
+  it('overwrites user entries, clears their wrong marks, and respects the lock', () => {
+    let s = run(load(), { type: 'place', index: 2, digit: 9 }, { type: 'markWrong', cells: [2] })
+    s = run(s, { type: 'applyPlacements', placements: [{ cell: 2, value: 4 }] })
+    expect(s.cells[2]).toBe(4)
+    expect(s.wrongCells).toEqual([])
+    const locked = run(s, { type: 'lock' })
+    expect(run(locked, { type: 'applyPlacements', placements: [{ cell: 3, value: 6 }] })).toBe(
+      locked,
+    )
+  })
+})

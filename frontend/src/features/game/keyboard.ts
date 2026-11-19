@@ -9,6 +9,10 @@ export type KeyCommand =
   | { type: 'hint' }
   | { type: 'undo' }
   | { type: 'redo' }
+  | { type: 'search' }
+  | { type: 'guess' }
+  | { type: 'branch' }
+  | { type: 'cancel' }
 
 const ARROWS: Record<string, Direction> = {
   ArrowUp: 'up',
@@ -56,5 +60,9 @@ export function keyToCommand(event: KeyLike): KeyCommand | null {
   if (lower === 'h') return { type: 'hint' }
   if (lower === 'u') return { type: 'undo' }
   if (lower === 'r') return { type: 'redo' }
+  if (lower === 's') return { type: 'search' }
+  if (lower === 'g') return { type: 'guess' }
+  if (lower === 'b') return { type: 'branch' }
+  if (event.key === 'Escape') return { type: 'cancel' }
   return null
 }

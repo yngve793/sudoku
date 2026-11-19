@@ -93,6 +93,12 @@ function Breakdown({ breakdown: b }: { breakdown: ScoreBreakdown }) {
           <th scope="row">Mistakes</th>
           <td>−{formatNumber(b.mistake_penalty)}</td>
         </tr>
+        <tr>
+          <th scope="row">
+            Search <span className="breakdown__note">(auto placements)</span>
+          </th>
+          <td>−{formatNumber(b.search_penalty)}</td>
+        </tr>
         <tr className="breakdown__total">
           <th scope="row">Total</th>
           <td>{formatNumber(b.total)}</td>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import JSON, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -39,6 +40,12 @@ class Game(Base):
     started_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), default=None)
+    # Search mode (PLAN.md §5.5): the player's what-if tree, stored as validated JSON (never
+    # trusted for scoring), and the number of cells auto-filled by the propagate endpoint.
+    search_tree: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), default=None
+    )
+    auto_placements: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
     puzzle: Mapped[Puzzle] = relationship(lazy="joined")
 

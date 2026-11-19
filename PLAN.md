@@ -324,6 +324,130 @@ hint_events  id PK, game_id FK, level, technique, cells JSON, created_at
 - Types come from the backend OpenAPI schema (`npm run gen:api`). MSW mocks allow frontend development before the API exists.
 - Tooling: ESLint (typescript-eslint, react-hooks, jsx-a11y), Prettier, `tsc --noEmit` in CI.
 
+### 5.5 Search mode (what-if exploration tree)
+
+The player explores hypotheses ("what if r3c5 = 7?") as a **directed tree** of choices, follows their implications, and sees which branches end in a contradiction.
+
+#### Concepts
+- **Root**: a snapshot of the main board (`root_board`) taken when the tree is created. Givens are always preserved.
+- **Node**: one choice plus the implications the player (or auto mode) derived from it.
+  - Every node except the root has a `choice` `{cell, value}`.
+  - It holds a list of `placements` `{cell, value, source: "manual" | "auto"}`.
+  - A node's board = `root_board` + every choice and placement on the path from the root to that node.
+- **Branching**: each distinct choice at a node is its own child, so siblings are alternatives. "Branch on all candidates" for a selected cell creates **one child per candidate** of that cell. The candidates come from constraints only.
+- **Implications**:
+  - **Manual mode** (free): the player enters digits into the selected node; these are `manual` placements.
+  - **Auto mode** (costs points): after every new choice or manual placement, the server returns all *direct implications*. These are naked and hidden singles repeated until nothing changes. They are appended as `auto` placements.
+- **Contradiction** (both modes; a constraint check, **never** a comparison with the solution). Kinds:
+  - `duplicate`: a digit twice in a row, column or box;
+  - `no_candidates`: an empty cell with no possible digit;
+  - `digit_nowhere`: a digit that can't be placed anywhere in a unit where it's still missing.
+
+  A node with a contradiction is **dead**: it's drawn with a cross (✗) and can't get children. If the children made by "branch on all candidates" for one cell are *all* dead, their parent is dead too ("every option for r3c5 fails"), and this repeats up the tree.
+- **Solved**: a node whose board is complete and has no contradiction is marked ✓.
+- **Apply branch**: copies every choice and placement on the path from the root to the selected node onto the main board, as one undoable action. It's disabled for dead nodes.
+
+#### Validator API additions (`sudoku_validator`)
+```python
+@dataclass(frozen=True)
+class Contradiction:
+    kind: Literal["duplicate", "no_candidates", "digit_nowhere"]
+    cells: tuple[int, ...]          # cells involved (duplicates, the empty cell, or the unit's empty cells)
+    digit: int | None               # the digit for duplicate / digit_nowhere
+    unit: str | None                # "row 3" / "column 5" / "box 2" (1-based), None for no_candidates
+    explanation: str                # e.g. "7 appears twice in row 3 (r3c2, r3c8)."
+
+@dataclass(frozen=True)
+class Placement:
+    cell: int; value: int
+    technique: Literal["Naked Single", "Hidden Single"]
+
+@dataclass(frozen=True)
+class Propagation:
+    placements: tuple[Placement, ...]   # in the order they were found
+    contradiction: Contradiction | None # first contradiction found (stops propagation)
+    grid: Grid                          # resulting grid
+
+def find_contradiction(grid: Grid) -> Contradiction | None
+def propagate(grid: Grid, *, max_placements: int = 81) -> Propagation
+```
+- Both are **constraint-only**: they never consult the solution.
+- `propagate` on an already-contradictory grid returns no placements and the contradiction.
+
+#### Backend changes
+- **DB**: `games.search_tree JSON NULL` and `games.auto_placements INT NOT NULL DEFAULT 0` (migration `0002`).
+- **`GameOut`** adds `search_tree: SearchTree | null`, `auto_placements: int` and `search_costs: {"auto_placement": int}`.
+- **`PATCH /games/{id}`** accepts an optional `search_tree`; `null` clears it. Server-side validation:
+  - `version == 1`, at most 500 nodes, unique string ids (≤ 36 characters);
+  - exactly one root (`parent_id = null`, `choice = null`, no placements); every `parent_id` refers to an existing node;
+  - cells 0–80, values 1–9;
+  - `root_board` keeps the givens;
+  - the serialized size is ≤ 256 KB.
+  - The structure is stored as is; scoring never trusts it.
+- **`POST /games/{id}/search/propagate`** `{board}` → `{placements: [{cell, value, technique}], contradiction: Contradiction | null, penalty, auto_placements}`.
+  - `board` is an 81-character string that must keep the givens (otherwise 422 `givens_modified`).
+  - 409 `game_not_in_progress`.
+  - Rate limit `SEARCH_RATE_LIMIT` (default `120/minute`).
+  - The server adds `len(placements)` to `auto_placements`. `penalty = len(placements) × AUTO_PLACEMENT_PENALTY`. It is treated like hints for `version`, so autosave doesn't conflict.
+- **Scoring**:
+  - `AUTO_PLACEMENT_PENALTY = 2` points per auto-filled cell.
+  - `score_breakdown` adds `search_penalty = auto_placements × 2`.
+  - Manual search is free.
+- **Persisted tree shape (`SearchTree`)**:
+  ```json
+  { "version": 1, "root_board": "81 chars", "mode": "manual" | "auto", "selected_node_id": "id",
+    "nodes": [ { "id": "n1", "parent_id": null, "choice": null, "placements": [],
+                 "status": "open" | "dead" | "solved", "contradiction": Contradiction | null,
+                 "branch_cell": int | null, "collapsed": false } ] }
+  ```
+  `branch_cell` is set on a parent when its children were created by "branch on all candidates". It is needed for the dead-propagation rule.
+
+#### Frontend
+- **Search toggle** in the game controls (key `S`). In search mode:
+  - the board shows the selected node's board and the main board can't be edited;
+  - choice cells are outlined, manual placements look like normal entries, auto placements use a distinct colour and style, and contradiction cells are highlighted.
+- **Actions**:
+  - **Guess** (`G`, then a digit): a new child with that choice.
+  - **Branch on all candidates** (`B`) on the selected cell.
+  - Digit keys add a placement to the selected node; **Erase** removes the node's own manual placements.
+  - **Delete branch**, **Apply branch**, **Reset tree**, **Exit search** (the tree is kept).
+  - The Manual/Auto toggle shows the cost before auto is enabled.
+- **Graph**:
+  - an SVG top-down tree; edges point from parent to child;
+  - **every inferred value is its own graph node.** A tree node's placements are drawn as a chain under its guess node, in the order they were found: `r3c5=7` (guess) → `r3c6=2` → `r4c1=5` → ….
+    - Further guesses and branches hang off the **last** node of their parent's chain.
+    - Node kinds look different, and colour is never the only signal:
+      - guess: bold, double border;
+      - manual placement: solid border;
+      - auto placement: dashed border, italic, with the technique, e.g. "Naked Single", in its label and tooltip.
+    - Selecting an implication node shows the board **up to and including** that step, with that cell highlighted. Board actions still apply to the owning tree node at its full state, and selection then jumps to the end of its chain.
+    - The ✗ is drawn on the node where the contradiction appears: the guess itself, or the placement that caused it.
+    - Collapsing a guess node folds its chain and subtree into a `+n` summary.
+    - This is presentation only: the persisted `SearchTree` shape is unchanged;
+  - **Compact view** is the default; a toolbar toggle switches between Compact and Expanded, and the choice is stored in `localStorage`.
+    - Any maximal run of graph nodes where each node has a **unique direct child** is merged into one **chain card**. This includes a guess whose chain continues, and implication steps.
+    - The card is a tight vertical list: one row per value, with no arrows between rows. A guess is the bold header row.
+    - Every row is still individually selectable, keyboard-navigable and labelled, so each inferred value keeps its own entry.
+    - A branch point (2+ children) or a leaf ends the card. Edges are drawn only between cards and plain nodes.
+    - Dead rows show the ✗ and the following rows are dimmed. A long card (> 8 rows) shows its first and last 3 rows plus "… n more", which expands on click.
+  - **Open in new tab**: the "Open tree in new tab" button opens `/game/:id/tree`, a full-screen graph page.
+    - The **game tab is the single writer**: it owns the reducer state and autosave.
+    - The tabs sync through a `BroadcastChannel("sudoku-search-<gameId>")`:
+      - the game tab broadcasts snapshots (the tree plus UI selection) after every change;
+      - the tree tab sends commands: select node or step, collapse/expand, guess, branch, delete branch.
+    - The tree tab starts from `GET /games/:id` (the persisted tree), then follows live snapshots.
+    - If no game tab answers a ping, the tree tab is a **read-only** view of the saved tree, with a notice and a "refresh" action.
+    - Messages are versioned and validated; anything unknown is ignored.
+    - The tree tab authenticates with the usual silent refresh, so the token is never sent across tabs.
+  - dead nodes get a red ✗ and a dimmed subtree; solved nodes get ✓; the selected node is highlighted;
+  - pan and zoom, and subtree collapse.
+- **Accessible**: `role="tree"` / `treeitem` with `aria-selected` / `aria-expanded`. Arrow keys move to the parent, child and sibling, and Enter selects. Labels read like "r3c5 equals 7, dead: 7 appears twice in row 3".
+- **Logic**:
+  - The tree is a pure `searchReducer`.
+  - Contradiction checking and candidates are computed client-side, constraint-only, with the same semantics as the validator, for instant feedback in manual mode.
+  - Auto mode calls the propagate endpoint.
+  - The tree is saved through the existing debounced autosave PATCH.
+
 ## 6. Agents and ownership
 
 Each agent is defined in `.claude/agents/` and **owns exactly one folder**. It may read other folders but must not edit them. Changes to a contract (section 5 APIs, endpoints, DB schema) are reported back to the orchestrator rather than made unilaterally.

@@ -68,3 +68,4 @@ def rate_limit(scope: str, limit_of: Callable[[Settings], str]) -> Callable[[Req
 auth_rate_limit = rate_limit("auth", lambda s: s.auth_rate_limit)
 refresh_rate_limit = rate_limit("refresh", lambda s: s.refresh_rate_limit)
 hint_rate_limit = rate_limit("hint", lambda s: s.hint_rate_limit)
+search_rate_limit = rate_limit("search", lambda s: s.search_rate_limit)

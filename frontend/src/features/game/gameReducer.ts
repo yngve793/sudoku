@@ -56,6 +56,8 @@ export type GameAction =
   | { type: 'place'; digit: number; index?: number }
   | { type: 'toggleNote'; digit: number; index?: number }
   | { type: 'erase'; index?: number }
+  /** Place many digits as one undoable step (search mode "Apply branch"). */
+  | { type: 'applyPlacements'; placements: readonly { cell: number; value: number }[] }
   | { type: 'undo' }
   | { type: 'redo' }
   | { type: 'toggleNotesMode' }
@@ -163,6 +165,34 @@ function erase(state: GameState, index: number | undefined): GameState {
   return state
 }
 
+function applyPlacements(
+  state: GameState,
+  placements: readonly { cell: number; value: number }[],
+): GameState {
+  if (state.locked) return state
+  const cells = state.cells.slice()
+  const notes = state.notes.slice()
+  let last: number | null = null
+  for (const { cell, value } of placements) {
+    if (!isIndex(cell) || !isDigit(value) || state.fixed[cell] || cells[cell] === value) continue
+    cells[cell] = value
+    notes[cell] = []
+    for (const peer of PEERS[cell] ?? []) {
+      const peerNotes = notes[peer] ?? []
+      if (peerNotes.includes(value)) notes[peer] = peerNotes.filter((d) => d !== value)
+    }
+    last = cell
+  }
+  if (last === null) return state
+  const next = commit(state, last, cells, notes)
+  const touched = new Set(placements.map((p) => p.cell))
+  return {
+    ...next,
+    selected: last,
+    wrongCells: state.wrongCells.filter((i) => !touched.has(i)),
+  }
+}
+
 function move(state: GameState, direction: Direction): GameState {
   if (state.selected === null) return { ...state, selected: 0 }
   let row = rowOf(state.selected)
@@ -240,6 +270,8 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       return toggleNote(state, action.digit, action.index)
     case 'erase':
       return erase(state, action.index)
+    case 'applyPlacements':
+      return applyPlacements(state, action.placements)
     case 'undo':
       return travel(state, 'past')
     case 'redo':

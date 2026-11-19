@@ -3,18 +3,33 @@ import { Cell } from './Cell'
 import type { GameState } from './gameReducer'
 import { PEERS, findConflicts } from './grid'
 
+export interface BoardSearchMarks {
+  origins: ReadonlyMap<number, { origin: 'choice' | 'manual' | 'auto'; own: boolean }>
+  contradiction: ReadonlySet<number>
+  /** Cell of the graph step being viewed (highlighted). */
+  stepCell?: number | null
+}
+
 interface BoardProps {
   state: GameState
   onSelect: (index: number) => void
   /** Hide digits (paused). */
   hidden?: boolean
   label?: string
+  /** Search mode overlay: how each cell was filled and the contradiction cells. */
+  search?: BoardSearchMarks
 }
 
 const ROWS = Array.from({ length: 9 }, (_, r) => r)
 const COLS = Array.from({ length: 9 }, (_, c) => c)
 
-export function Board({ state, onSelect, hidden = false, label = 'Sudoku board' }: BoardProps) {
+export function Board({
+  state,
+  onSelect,
+  hidden = false,
+  label = 'Sudoku board',
+  search,
+}: BoardProps) {
   const cellEls = useRef<(HTMLDivElement | null)[]>([])
   const gridRef = useRef<HTMLDivElement>(null)
   const conflicts = useMemo(() => findConflicts(state.cells), [state.cells])
@@ -46,7 +61,7 @@ export function Board({ state, onSelect, hidden = false, label = 'Sudoku board' 
       role="grid"
       aria-label={label}
       aria-readonly={state.locked || undefined}
-      className={`board${hidden ? ' board--hidden' : ''}${state.notesMode ? ' board--notes' : ''}`}
+      className={`board${hidden ? ' board--hidden' : ''}${state.notesMode ? ' board--notes' : ''}${search ? ' board--search' : ''}`}
     >
       {ROWS.map((r) => (
         <div role="row" className="board__row" key={r}>
@@ -67,6 +82,10 @@ export function Board({ state, onSelect, hidden = false, label = 'Sudoku board' 
                 conflict={!hidden && conflicts.has(i)}
                 wrong={!hidden && wrong.has(i)}
                 hinted={!hidden && hinted.has(i)}
+                searchOrigin={search?.origins.get(i)?.origin ?? null}
+                searchOwn={search?.origins.get(i)?.own ?? false}
+                contradiction={!hidden && (search?.contradiction.has(i) ?? false)}
+                step={!hidden && search?.stepCell === i}
                 onSelect={onSelect}
                 cellRef={cellRef}
               />

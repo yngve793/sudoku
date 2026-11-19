@@ -11,6 +11,7 @@ import type {
   LeaderboardMe,
   LeaderboardPeriod,
   LoginRequest,
+  PropagateResponse,
   Me,
   MessageResponse,
   RegisterRequest,
@@ -74,6 +75,9 @@ export const gamesApi = {
   hint: (id: number, stage: HintStage) => post<Hint>(`/games/${id}/hint`, { stage }),
   check: (id: number) => post<CheckResponse>(`/games/${id}/check`),
   complete: (id: number) => post<CompletedGame>(`/games/${id}/complete`),
+  /** Search mode, auto implications for `board` (does not change `version`). */
+  propagate: (id: number, board: string) =>
+    post<PropagateResponse>(`/games/${id}/search/propagate`, { board }),
 }
 
 export const scoresApi = {

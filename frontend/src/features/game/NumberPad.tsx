@@ -4,10 +4,13 @@ interface NumberPadProps {
   counts: readonly number[]
   notesMode: boolean
   disabled: boolean
+  /** Verb for the button labels (default "Enter", or "Toggle note" in notes mode). */
+  verb?: string
   onDigit: (digit: number) => void
 }
 
-export function NumberPad({ counts, notesMode, disabled, onDigit }: NumberPadProps) {
+export function NumberPad({ counts, notesMode, disabled, verb, onDigit }: NumberPadProps) {
+  const action = verb ?? (notesMode ? 'Toggle note' : 'Enter')
   return (
     <div className="numpad" role="group" aria-label={notesMode ? 'Note digits' : 'Digits'}>
       {DIGITS.map((d) => {
@@ -18,7 +21,7 @@ export function NumberPad({ counts, notesMode, disabled, onDigit }: NumberPadPro
             type="button"
             className={`numpad__key${remaining === 0 ? ' numpad__key--done' : ''}`}
             disabled={disabled}
-            aria-label={`${notesMode ? 'Toggle note' : 'Enter'} ${d}, ${remaining} left`}
+            aria-label={`${action} ${d}, ${remaining} left`}
             onClick={() => onDigit(d)}
           >
             <span className="numpad__digit">{d}</span>

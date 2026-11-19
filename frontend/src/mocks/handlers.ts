@@ -17,6 +17,7 @@ import type {
 import { DIFFICULTIES } from '../api/types'
 import {
   HINT_COSTS,
+  SEARCH_COSTS,
   computeScore,
   db,
   nextId,
@@ -27,12 +28,15 @@ import {
   type MockUser,
 } from './db'
 import { makePuzzle, mockHint } from './puzzles'
+import { mockPropagate } from './propagate'
 
 const API = '*/api/v1'
 const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 const RESERVED = new Set(['admin', 'root', 'system', 'moderator', 'support', 'sudoku'])
 const GRID_RE = /^[0-9]{81}$/
+const MAX_SEARCH_NODES = 500
+const MAX_SEARCH_BYTES = 256 * 1024
 const REFRESH_COOKIE = 'refresh_token'
 const COOKIE_PATH = '/api/v1/auth'
 /** Same reply whether or not the account exists (no enumeration). */
@@ -194,6 +198,133 @@ function userStats(user: MockUser): Me['stats'] {
     total_score: completed.reduce((sum, g) => sum + (g.score ?? 0), 0),
     best_scores: best,
   }
+}
+
+const isInt = (v: unknown, lo: number, hi: number): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isNodeId = (v: unknown): v is string =>
+  typeof v === 'string' && v.length >= 1 && v.length <= 36
+
+/** Pydantic `extra="forbid"` + every field required. */
+function exactKeys(
+  obj: Record<string, unknown>,
+  keys: readonly string[],
+  where: string,
+): string | null {
+  for (const k of keys) if (!(k in obj)) return `${where}.${k}: Field required`
+  for (const k of Object.keys(obj))
+    if (!keys.includes(k)) return `${where}.${k}: Extra inputs are not permitted`
+  return null
+}
+
+function contradictionProblem(c: unknown, where: string): string | null {
+  if (c === null) return null
+  if (!isObj(c)) return `${where}: Input should be an object`
+  const keys = exactKeys(c, ['kind', 'cells', 'digit', 'unit', 'explanation'], where)
+  if (keys) return keys
+  if (!['duplicate', 'no_candidates', 'digit_nowhere'].includes(c.kind as string))
+    return `${where}.kind: invalid`
+  if (!Array.isArray(c.cells) || c.cells.length > 81 || c.cells.some((x) => !isInt(x, 0, 80)))
+    return `${where}.cells: invalid`
+  if (c.digit !== null && !isInt(c.digit, 1, 9)) return `${where}.digit: invalid`
+  if (c.unit !== null && (typeof c.unit !== 'string' || c.unit.length > 32))
+    return `${where}.unit: invalid`
+  if (typeof c.explanation !== 'string' || c.explanation.length > 500)
+    return `${where}.explanation: invalid`
+  return null
+}
+
+/** Mirrors backend `schemas/search.py` SearchTree validation (422 validation_error). */
+function searchTreeProblem(tree: unknown): string | null {
+  const w = 'body.search_tree'
+  if (!isObj(tree)) return `${w}: Input should be an object`
+  const top = exactKeys(tree, ['version', 'root_board', 'mode', 'selected_node_id', 'nodes'], w)
+  if (top) return top
+  if (tree.version !== 1) return `${w}.version: Input should be 1`
+  if (typeof tree.root_board !== 'string' || !GRID_RE.test(tree.root_board))
+    return `${w}.root_board: String should match pattern '^[0-9]{81}$'`
+  if (tree.mode !== 'manual' && tree.mode !== 'auto')
+    return `${w}.mode: Input should be 'manual' or 'auto'`
+  if (!isNodeId(tree.selected_node_id)) return `${w}.selected_node_id: invalid`
+  const nodes = tree.nodes
+  if (!Array.isArray(nodes) || nodes.length < 1 || nodes.length > MAX_SEARCH_NODES)
+    return `${w}.nodes: List should have 1 to ${MAX_SEARCH_NODES} items`
+  const byId = new Map<string, Record<string, unknown>>()
+  for (const [i, n] of nodes.entries()) {
+    const at = `${w}.nodes.${i}`
+    if (!isObj(n)) return `${at}: Input should be an object`
+    const keys = exactKeys(
+      n,
+      [
+        'id',
+        'parent_id',
+        'choice',
+        'placements',
+        'status',
+        'contradiction',
+        'branch_cell',
+        'collapsed',
+      ],
+      at,
+    )
+    if (keys) return keys
+    if (!isNodeId(n.id)) return `${at}.id: invalid`
+    if (n.parent_id !== null && !isNodeId(n.parent_id)) return `${at}.parent_id: invalid`
+    if (n.choice !== null) {
+      if (!isObj(n.choice)) return `${at}.choice: invalid`
+      const ck = exactKeys(n.choice, ['cell', 'value'], `${at}.choice`)
+      if (ck) return ck
+      if (!isInt(n.choice.cell, 0, 80) || !isInt(n.choice.value, 1, 9))
+        return `${at}.choice: invalid`
+    }
+    if (!Array.isArray(n.placements) || n.placements.length > 81) return `${at}.placements: invalid`
+    for (const p of n.placements as unknown[]) {
+      if (!isObj(p)) return `${at}.placements: invalid`
+      const pk = exactKeys(p, ['cell', 'value', 'source'], `${at}.placements`)
+      if (pk) return pk
+      if (!isInt(p.cell, 0, 80) || !isInt(p.value, 1, 9)) return `${at}.placements: invalid`
+      if (p.source !== 'manual' && p.source !== 'auto') return `${at}.placements.source: invalid`
+    }
+    if (!['open', 'dead', 'solved'].includes(n.status as string)) return `${at}.status: invalid`
+    const cp = contradictionProblem(n.contradiction, `${at}.contradiction`)
+    if (cp) return cp
+    if (n.branch_cell !== null && !isInt(n.branch_cell, 0, 80)) return `${at}.branch_cell: invalid`
+    if (typeof n.collapsed !== 'boolean') return `${at}.collapsed: Input should be a valid boolean`
+    if (byId.has(n.id)) return `${w}: Value error, duplicate node id '${n.id}'`
+    byId.set(n.id, n)
+  }
+  const all = [...byId.values()]
+  const roots = all.filter((n) => n.parent_id === null)
+  if (roots.length !== 1)
+    return `${w}: Value error, the tree must have exactly one root, found ${roots.length}`
+  const root = roots[0]!
+  if (root.choice !== null || (root.placements as unknown[]).length)
+    return `${w}: Value error, the root node must have no choice and no placements`
+  const children = new Map<string, string[]>()
+  for (const n of all) {
+    if (n.parent_id === null) continue
+    const parent = n.parent_id as string
+    if (!byId.has(parent))
+      return `${w}: Value error, node '${n.id as string}' has unknown parent_id`
+    if (n.choice === null)
+      return `${w}: Value error, non-root node '${n.id as string}' must have a choice`
+    children.set(parent, [...(children.get(parent) ?? []), n.id as string])
+  }
+  const reached = new Set([root.id as string])
+  const stack = [root.id as string]
+  while (stack.length)
+    for (const c of children.get(stack.pop()!) ?? []) {
+      reached.add(c)
+      stack.push(c)
+    }
+  if (reached.size !== byId.size) return `${w}: Value error, parent_id links contain a cycle`
+  if (!byId.has(tree.selected_node_id))
+    return `${w}: Value error, selected_node_id must be the id of a node`
+  if (new TextEncoder().encode(JSON.stringify(tree)).length > MAX_SEARCH_BYTES)
+    return `${w}: Value error, the search tree is too large`
+  return null
 }
 
 export const handlers = [
@@ -396,10 +527,17 @@ export const handlers = [
     if (!GRID_RE.test(current))
       return validation("current: String should match pattern '^[0-9]{81}$'")
     if (typeof body.version !== 'number') return validation('version: Field required')
+    const tree = body.search_tree
+    if (tree) {
+      const problem = searchTreeProblem(tree)
+      if (problem) return validation(problem)
+    }
     const game = findGame(user, params.id)
     if (!game) return gameNotFound()
     if (game.status !== 'in_progress') return notInProgress()
     if ([...game.givens].some((g, i) => g !== '0' && current[i] !== g))
+      return err(422, 'givens_modified', 'Given cells cannot be changed')
+    if (tree && [...game.givens].some((g, i) => g !== '0' && tree.root_board[i] !== g))
       return err(422, 'givens_modified', 'Given cells cannot be changed')
     if (body.version !== game.version)
       return err(409, 'version_conflict', 'The game was changed elsewhere; reload and try again')
@@ -410,6 +548,8 @@ export const handlers = [
         .map(([k, digits]) => [k, [...new Set(digits)].sort((a, b) => a - b)]),
     )
     game.elapsed_seconds = Math.max(game.elapsed_seconds, Math.floor(body.elapsed_seconds ?? 0))
+    // Omitted = keep the saved tree; explicit null clears it.
+    if (tree !== undefined) game.search_tree = tree
     game.version += 1
     game.updated_at = new Date().toISOString()
     saveDb()
@@ -431,6 +571,28 @@ export const handlers = [
     game.hint_stages.push(stage)
     saveDb()
     return HttpResponse.json(hint)
+  }),
+
+  // Search mode: auto implications. Does not change `version` (like hints).
+  http.post(`${API}/games/:id/search/propagate`, async ({ request, params }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const { board = '' } = await json<{ board: string }>(request)
+    if (!GRID_RE.test(board)) return validation("board: String should match pattern '^[0-9]{81}$'")
+    const game = findGame(user, params.id)
+    if (!game) return gameNotFound()
+    if (game.status !== 'in_progress') return notInProgress()
+    if ([...game.givens].some((g, i) => g !== '0' && board[i] !== g))
+      return err(422, 'givens_modified', 'Given cells cannot be changed')
+    const result = mockPropagate([...board].map(Number))
+    game.auto_placements = (game.auto_placements ?? 0) + result.placements.length
+    saveDb()
+    return HttpResponse.json({
+      placements: result.placements,
+      contradiction: result.contradiction,
+      penalty: result.placements.length * SEARCH_COSTS.auto_placement,
+      auto_placements: game.auto_placements,
+    })
   }),
 
   http.post(`${API}/games/:id/check`, ({ request, params }) => {

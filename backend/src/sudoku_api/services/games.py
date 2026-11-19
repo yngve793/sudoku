@@ -24,7 +24,7 @@ from sudoku_api.services.pool import (
     take_from_pool,
 )
 from sudoku_api.services.puzzle_source import SourcePuzzle
-from sudoku_api.services.scoring import ScoreBreakdown, compute_score
+from sudoku_api.services.scoring import ScoreBreakdown, compute_score, search_penalty
 
 MAX_ELAPSED_SECONDS = 7 * 24 * 3600
 
@@ -35,6 +35,10 @@ class BoardUpdate:
     notes: dict[str, list[int]]
     elapsed_seconds: int
     version: int
+    # When `update_search_tree` is False the saved tree is kept; otherwise it is replaced by
+    # `search_tree` (a validated `SearchTree` dump), and None clears it.
+    update_search_tree: bool = False
+    search_tree: dict[str, Any] | None = None
 
 
 def _load(session: Session, user: User, game_id: int) -> Game:
@@ -53,6 +57,11 @@ def ensure_givens_kept(givens: str, current: str) -> None:
     for g, c in zip(givens, current, strict=True):
         if g != "0" and g != c:
             raise ApiError(422, "givens_modified", "Given cells cannot be changed")
+
+
+def ensure_search_tree_givens_kept(givens: str, search_tree: dict[str, Any] | None) -> None:
+    if search_tree is not None:
+        ensure_givens_kept(givens, search_tree["root_board"])
 
 
 def puzzle_unavailable() -> ApiError:
@@ -127,6 +136,9 @@ def get_current_game(session: Session, user: User) -> Game:
 def _apply_update(session: Session, game: Game, upd: BoardUpdate, **extra: Any) -> None:
     """Optimistic-locked write of the board. Raises 409 `version_conflict` on a stale version."""
     ensure_givens_kept(game.puzzle.givens, upd.current)
+    if upd.update_search_tree:
+        ensure_search_tree_givens_kept(game.puzzle.givens, upd.search_tree)
+        extra["search_tree"] = upd.search_tree
     elapsed = min(max(game.elapsed_seconds, upd.elapsed_seconds), MAX_ELAPSED_SECONDS)
     result = session.execute(
         update(Game)
@@ -216,6 +228,37 @@ def hint_for_game(
     return staged
 
 
+@dataclass(frozen=True)
+class SearchPropagation:
+    propagation: puzzle_logic.Propagation
+    penalty: int  # points deducted for this call's placements
+    auto_placements: int  # the game's running total
+
+
+def propagate_for_game(session: Session, user: User, game_id: int, board: str) -> SearchPropagation:
+    """Search mode auto implications (naked/hidden singles) for a node's board.
+
+    Constraint-only: the solution is never consulted. Each placement returned counts as an
+    auto placement for scoring. Like hints, this does not change `version`, so it never
+    conflicts with a concurrent autosave.
+    """
+    game = _load(session, user, game_id)
+    _require_in_progress(game)
+    ensure_givens_kept(game.puzzle.givens, board)
+    result = puzzle_logic.propagate(puzzle_logic.parse(board))
+    count = len(result.placements)
+    if count:
+        session.execute(
+            update(Game)
+            .where(Game.id == game.id)
+            .values(auto_placements=Game.auto_placements + count)
+            .execution_options(synchronize_session=False)
+        )
+    session.commit()
+    session.refresh(game)
+    return SearchPropagation(result, search_penalty(count), game.auto_placements)
+
+
 def complete_game(
     session: Session, user: User, game_id: int, upd: BoardUpdate | None = None
 ) -> tuple[Game, ScoreBreakdown]:
@@ -231,7 +274,11 @@ def complete_game(
         session.scalars(select(HintEvent.level).where(HintEvent.game_id == game.id)).all()
     )
     breakdown = compute_score(
-        Difficulty(game.puzzle.difficulty), game.elapsed_seconds, stages, game.mistakes
+        Difficulty(game.puzzle.difficulty),
+        game.elapsed_seconds,
+        stages,
+        game.mistakes,
+        game.auto_placements,
     )
     now = utcnow()
     result = session.execute(
@@ -260,5 +307,9 @@ def score_breakdown(session: Session, game: Game) -> ScoreBreakdown:
         session.scalars(select(HintEvent.level).where(HintEvent.game_id == game.id)).all()
     )
     return compute_score(
-        Difficulty(game.puzzle.difficulty), game.elapsed_seconds, stages, game.mistakes
+        Difficulty(game.puzzle.difficulty),
+        game.elapsed_seconds,
+        stages,
+        game.mistakes,
+        game.auto_placements,
     )

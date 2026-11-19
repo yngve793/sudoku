@@ -191,7 +191,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Autosave board, notes and timer (optimistic lock on `version`) */
+        /**
+         * Autosave board, notes, timer and search tree (optimistic lock on `version`)
+         * @description `search_tree` is optional: omit it to keep the saved tree, send `null` to clear it. Its `root_board` must keep the givens (422 `givens_modified`).
+         */
         patch: operations["save_game_api_v1_games__game_id__patch"];
         trace?: never;
     };
@@ -243,6 +246,26 @@ export interface paths {
         put?: never;
         /** Next hint at stage 1 (technique + region), 2 (cells) or 3 (value) */
         post: operations["hint_api_v1_games__game_id__hint_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/games/{game_id}/search/propagate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search mode: direct implications (naked/hidden singles) of a node's board
+         * @description Constraint-only (never compares with the solution). Every returned placement counts as an auto placement and costs `search_costs.auto_placement` points. Does not change `version`. 422 `givens_modified` if `board` changes a given.
+         */
+        post: operations["search_propagate_api_v1_games__game_id__search_propagate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -372,6 +395,11 @@ export interface components {
         };
         /** CompletedGameOut */
         CompletedGameOut: {
+            /**
+             * Auto Placements
+             * @description Cells auto-filled by search propagation
+             */
+            auto_placements: number;
             /** Completed At */
             completed_at: string | null;
             /** Current */
@@ -395,6 +423,9 @@ export interface components {
             /** Score */
             score: number | null;
             score_breakdown: components["schemas"]["ScoreBreakdownOut"];
+            search_costs: components["schemas"]["SearchCosts"];
+            /** @description The saved search-mode tree, if any */
+            search_tree: components["schemas"]["SearchTree"] | null;
             /**
              * Started At
              * Format: date-time
@@ -408,6 +439,28 @@ export interface components {
             updated_at: string;
             /** Version */
             version: number;
+        };
+        /**
+         * Contradiction
+         * @description A constraint violation (never a comparison with the solution).
+         */
+        Contradiction: {
+            /** Cells */
+            cells: number[];
+            /** Digit */
+            digit: number | null;
+            /** Explanation */
+            explanation: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "duplicate" | "no_candidates" | "digit_nowhere";
+            /**
+             * Unit
+             * @description "row 3" / "column 5" / "box 2" (1-based); null for no_candidates
+             */
+            unit: string | null;
         };
         /**
          * Difficulty
@@ -434,6 +487,11 @@ export interface components {
          * @description Game state. Deliberately has no `solution` field.
          */
         GameOut: {
+            /**
+             * Auto Placements
+             * @description Cells auto-filled by search propagation
+             */
+            auto_placements: number;
             /** Completed At */
             completed_at: string | null;
             /** Current */
@@ -456,6 +514,9 @@ export interface components {
             };
             /** Score */
             score: number | null;
+            search_costs: components["schemas"]["SearchCosts"];
+            /** @description The saved search-mode tree, if any */
+            search_tree: components["schemas"]["SearchTree"] | null;
             /**
              * Started At
              * Format: date-time
@@ -488,6 +549,8 @@ export interface components {
             notes?: {
                 [key: string]: number[];
             };
+            /** @description Search-mode tree. Omit to keep the saved tree; send null to clear it. */
+            search_tree?: components["schemas"]["SearchTree"] | null;
             /** Version */
             version: number;
         };
@@ -631,6 +694,45 @@ export interface components {
         NewGameIn: {
             difficulty: components["schemas"]["Difficulty"];
         };
+        /** PropagateIn */
+        PropagateIn: {
+            /**
+             * Board
+             * @description The selected node's board; must keep the givens
+             */
+            board: string;
+        };
+        /** PropagateOut */
+        PropagateOut: {
+            /**
+             * Auto Placements
+             * @description Total auto-filled cells for this game so far
+             */
+            auto_placements: number;
+            contradiction: components["schemas"]["Contradiction"] | null;
+            /**
+             * Penalty
+             * @description Points this call deducts from the final score
+             */
+            penalty: number;
+            /**
+             * Placements
+             * @description In the order found
+             */
+            placements: components["schemas"]["PropagationPlacementOut"][];
+        };
+        /** PropagationPlacementOut */
+        PropagationPlacementOut: {
+            /** Cell */
+            cell: number;
+            /**
+             * Technique
+             * @enum {string}
+             */
+            technique: "Naked Single" | "Hidden Single";
+            /** Value */
+            value: number;
+        };
         /** RegisterIn */
         RegisterIn: {
             /**
@@ -660,6 +762,8 @@ export interface components {
             mistake_penalty: number;
             /** Par Seconds */
             par_seconds: number;
+            /** Search Penalty */
+            search_penalty: number;
             /** Time Factor */
             time_factor: number;
             /** Total */
@@ -693,6 +797,84 @@ export interface components {
             best: components["schemas"]["BestScore"][];
             /** History */
             history: components["schemas"]["ScoreHistoryItem"][];
+        };
+        /**
+         * SearchChoice
+         * @description The hypothesis of a node: "what if `cell` = `value`?".
+         */
+        SearchChoice: {
+            /** Cell */
+            cell: number;
+            /** Value */
+            value: number;
+        };
+        /** SearchCosts */
+        SearchCosts: {
+            /**
+             * Auto Placement
+             * @description Points deducted per auto-filled cell
+             */
+            auto_placement: number;
+        };
+        /** SearchNode */
+        SearchNode: {
+            /**
+             * Branch Cell
+             * @description Set on a parent whose children came from 'branch on all candidates'
+             */
+            branch_cell: number | null;
+            choice: components["schemas"]["SearchChoice"] | null;
+            /** Collapsed */
+            collapsed: boolean;
+            contradiction: components["schemas"]["Contradiction"] | null;
+            /** Id */
+            id: string;
+            /** Parent Id */
+            parent_id: string | null;
+            /** Placements */
+            placements: components["schemas"]["SearchPlacement"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "dead" | "solved";
+        };
+        /**
+         * SearchPlacement
+         * @description An implication entered by the player (`manual`) or returned by propagate (`auto`).
+         */
+        SearchPlacement: {
+            /** Cell */
+            cell: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "manual" | "auto";
+            /** Value */
+            value: number;
+        };
+        /**
+         * SearchTree
+         * @description The persisted search tree. Stored as is; scoring never trusts it.
+         */
+        SearchTree: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "manual" | "auto";
+            /** Nodes */
+            nodes: components["schemas"]["SearchNode"][];
+            /** Root Board */
+            root_board: string;
+            /** Selected Node Id */
+            selected_node_id: string;
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
         };
         /** TokenOut */
         TokenOut: {
@@ -1491,6 +1673,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HintOut"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    search_propagate_api_v1_games__game_id__search_propagate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                game_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PropagateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropagateOut"];
                 };
             };
             /** @description Not authenticated */

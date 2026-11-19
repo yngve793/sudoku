@@ -2,11 +2,20 @@
  * In-memory "server database" behind the MSW handlers.
  *
  * This simulates backend state only. In browser mock mode, users/games/scores
- * are persisted to sessionStorage so a page reload keeps the fake server's
- * data; no auth tokens are persisted (the fake refresh cookie encodes the
+ * are persisted to localStorage so a page reload, or another tab such as the
+ * search-tree tab, sees the fake server's data (like a real, shared server; each
+ * tab reads it when it starts); no auth tokens are persisted (the fake refresh cookie encodes the
  * user id, the way a real server would look up its own DB).
  */
-import type { Difficulty, Game, HintCosts, NotesWire, ScoreBreakdown } from '../api/types'
+import type {
+  Difficulty,
+  Game,
+  HintCosts,
+  NotesWire,
+  ScoreBreakdown,
+  SearchCosts,
+  SearchTree,
+} from '../api/types'
 import { DIFFICULTIES } from '../api/types'
 import { makePuzzle } from './puzzles'
 
@@ -39,6 +48,9 @@ export interface MockGame {
   started_at: string
   updated_at: string
   completed_at: string | null
+  /** Search mode (PLAN.md §5.5); optional so older stored mock DBs still load. */
+  search_tree?: SearchTree | null
+  auto_placements?: number
 }
 
 export interface MockEmail {
@@ -81,10 +93,11 @@ export const PAR_SECONDS: Record<Difficulty, number> = {
   extreme: 60 * 60,
 }
 export const MISTAKE_PENALTY = 15
+export const SEARCH_COSTS: SearchCosts = { auto_placement: 2 }
 
 export const DEMO_USER = { username: 'demo', email: 'demo@example.com', password: 'password123' }
 
-const STORAGE_KEY = 'sudoku.mock-server-db.v2'
+const STORAGE_KEY = 'sudoku.mock-server-db.v4'
 let persist = false
 
 function hoursAgo(h: number): string {
@@ -163,20 +176,25 @@ export function computeScore(game: MockGame): ScoreBreakdown {
     0,
   )
   const mistakePenalty = MISTAKE_PENALTY * Math.max(0, game.mistakes)
+  const searchPenalty = SEARCH_COSTS.auto_placement * (game.auto_placements ?? 0)
   return {
     base,
     par_seconds: par,
     time_factor: timeFactor,
     hint_penalty: hintPenalty,
     mistake_penalty: mistakePenalty,
-    total: Math.max(0, Math.round(base * timeFactor) - hintPenalty - mistakePenalty),
+    search_penalty: searchPenalty,
+    total: Math.max(
+      0,
+      Math.round(base * timeFactor) - hintPenalty - mistakePenalty - searchPenalty,
+    ),
   }
 }
 
 function load(): MockDb {
   if (persist) {
     try {
-      const raw = sessionStorage.getItem(STORAGE_KEY)
+      const raw = localStorage.getItem(STORAGE_KEY)
       if (raw) return { ...(JSON.parse(raw) as MockDb), accessTokens: {} }
     } catch {
       /* fall through to a fresh seed */
@@ -195,7 +213,7 @@ export function enablePersistence(): void {
 export function saveDb(): void {
   if (!persist) return
   const { accessTokens: _accessTokens, ...rest } = db
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ ...rest, accessTokens: {} }))
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...rest, accessTokens: {} }))
 }
 
 export function resetMockDb(): void {
@@ -229,5 +247,8 @@ export function toWireGame(game: MockGame): Game {
     updated_at: game.updated_at,
     completed_at: game.completed_at,
     hint_costs: HINT_COSTS,
+    search_tree: game.search_tree ?? null,
+    auto_placements: game.auto_placements ?? 0,
+    search_costs: SEARCH_COSTS,
   }
 }

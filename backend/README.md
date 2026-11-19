@@ -121,8 +121,9 @@ src/sudoku_api/
   security.py        Argon2id hashing, JWT access tokens, opaque token hashing
   ratelimit.py       per-app slowapi Limiter, exposed as FastAPI dependencies
   models/            ORM (users, refresh_tokens, email_tokens, puzzles, puzzle_pool, games, hint_events)
-  schemas/           Pydantic request and response models
-  routers/           thin HTTP layer: auth, me, games (incl. hint/check/complete), scores, health
+                     games also hold search_tree (JSON) and auto_placements (migration 0002)
+  schemas/           Pydantic request and response models (search.py: SearchTree, propagate)
+  routers/           thin HTTP layer: auth, me, games (incl. hint/check/complete/search), scores, health
   services/          business logic (auth, games, hints, scoring, pool, stats, email)
     puzzle_logic.py  adapter around sudoku_validator / sudoku_generator (temporary stand-ins)
     puzzle_source.py PuzzleSource protocol, FixturePuzzleSource, GeneratorPuzzleSource
@@ -160,6 +161,29 @@ scripts/             export_openapi.py
   1. Technique and a region; `cells` holds that row, column or box.
   2. The exact cells, with the value redacted from the explanation.
   3. The value and the full explanation.
+
+## Search mode (PLAN.md §5.5)
+
+- **Persisted tree.** `PATCH /games/{id}` (and `/complete`) accept an optional `search_tree`.
+  Omit it to keep the saved tree; send `null` to clear it. Saving it bumps `version` like any
+  autosave. `GameOut` returns `search_tree`, `auto_placements` and
+  `search_costs: {"auto_placement": 2}`.
+- **Validation** (`schemas/search.py`, 422 `validation_error`): `version` 1, 1–500 nodes,
+  unique ids of 1–36 characters, exactly one root (no `parent_id`, `choice` or placements),
+  every other node has a `choice` and an existing `parent_id`, no cycles, `selected_node_id`
+  names a node, cells 0–80, digits 1–9, `root_board` matches `^[0-9]{81}$`, unknown fields are
+  rejected, and the serialized tree is at most 256 KB. The service also checks that
+  `root_board` keeps the givens (422 `givens_modified`). The tree is stored as is and never
+  used for scoring.
+- **`POST /games/{id}/search/propagate`** `{board}` calls the validator's constraint-only
+  `propagate` (naked and hidden singles until nothing changes or a contradiction appears). It
+  returns `{placements, contradiction, penalty, auto_placements}`.
+  - Errors: 404 for someone else's game, 409 `game_not_in_progress`, 422 `givens_modified`,
+    429 `rate_limited` (`SEARCH_RATE_LIMIT`, default `120/minute` per IP).
+  - Each returned placement adds one to `games.auto_placements`. Like hints, it does not
+    change `version`.
+- **Scoring.** `score_breakdown.search_penalty = AUTO_PLACEMENT_PENALTY (2) × auto_placements`
+  is subtracted from the total (still floored at 0). Manual search is free.
 
 ### Pre-seeding the pool
 

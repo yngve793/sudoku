@@ -17,6 +17,7 @@ from .rating import (
     rate,
 )
 from .report import ValidationReport, validate_puzzle
+from .search import Contradiction, Placement, Propagation, find_contradiction, propagate
 from .solver import count_solutions, solve
 from .step import Step
 from .techniques import TECHNIQUE_WEIGHTS
@@ -26,19 +27,24 @@ __all__ = [
     "DIFFICULTY_TECHNIQUES",
     "TECHNIQUE_LEVEL",
     "TECHNIQUE_WEIGHTS",
+    "Contradiction",
     "Difficulty",
     "Grid",
     "Hint",
+    "Placement",
+    "Propagation",
     "Rating",
     "Step",
     "ValidationReport",
     "cell_name",
     "count_solutions",
+    "find_contradiction",
     "find_errors",
     "format_grid",
     "is_consistent",
     "next_hint",
     "parse",
+    "propagate",
     "rate",
     "solve",
     "validate_puzzle",

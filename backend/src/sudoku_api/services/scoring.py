@@ -1,8 +1,10 @@
 """Score formula (PLAN.md §5.3).
 
 score = base[difficulty] x time_factor - HINT_PENALTY x Σ stage weights - MISTAKE_PENALTY x mistakes
+        - AUTO_PLACEMENT_PENALTY x auto_placements
 floored at 0. time_factor is 1.5 at or under par, decays linearly to 0.5 at 4x par, and stays
-at 0.5 beyond that.
+at 0.5 beyond that. Auto placements are cells filled by search-mode propagation
+(PLAN.md §5.5); manual search is free.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ PAR_SECONDS: dict[Difficulty, int] = {
 STAGE_WEIGHTS: dict[int, int] = {1: 1, 2: 2, 3: 4}
 HINT_PENALTY = 10
 MISTAKE_PENALTY = 15
+AUTO_PLACEMENT_PENALTY = 2
 
 MAX_TIME_FACTOR = 1.5
 MIN_TIME_FACTOR = 0.5
@@ -63,23 +66,35 @@ class ScoreBreakdown:
     time_factor: float
     hint_penalty: int
     mistake_penalty: int
+    search_penalty: int
     total: int
 
 
+def search_penalty(auto_placements: int) -> int:
+    """Points deducted for `auto_placements` auto-filled search cells."""
+    return AUTO_PLACEMENT_PENALTY * max(0, auto_placements)
+
+
 def compute_score(
-    difficulty: Difficulty, elapsed_seconds: int, hint_stages: list[int], mistakes: int
+    difficulty: Difficulty,
+    elapsed_seconds: int,
+    hint_stages: list[int],
+    mistakes: int,
+    auto_placements: int = 0,
 ) -> ScoreBreakdown:
     base = BASE_POINTS[difficulty]
     par = PAR_SECONDS[difficulty]
     factor = time_factor(max(0, elapsed_seconds), par)
     hint_pen = sum(hint_cost(s) for s in hint_stages)
     mistake_pen = MISTAKE_PENALTY * max(0, mistakes)
-    total = max(0, round(base * factor) - hint_pen - mistake_pen)
+    search_pen = search_penalty(auto_placements)
+    total = max(0, round(base * factor) - hint_pen - mistake_pen - search_pen)
     return ScoreBreakdown(
         base=base,
         par_seconds=par,
         time_factor=round(factor, 4),
         hint_penalty=hint_pen,
         mistake_penalty=mistake_pen,
+        search_penalty=search_pen,
         total=total,
     )

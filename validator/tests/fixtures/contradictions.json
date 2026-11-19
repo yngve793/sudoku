@@ -1,0 +1,220 @@
+[
+  {
+    "name": "empty grid",
+    "grid": "000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "expected": null
+  },
+  {
+    "name": "valid puzzle",
+    "grid": "530070000600195000098000060800060003400803001700020006060000280000419005000080079",
+    "expected": null
+  },
+  {
+    "name": "solved grid",
+    "grid": "534678912672195348198342567859761423426853791713924856961537284287419635345286179",
+    "expected": null
+  },
+  {
+    "name": "wrong digit without a visible contradiction",
+    "grid": "532070000600195000098000060800060003400803001700020006060000280000419005000080079",
+    "expected": null
+  },
+  {
+    "name": "duplicate in row",
+    "grid": "500000005000000000000000000000000000000000000000000000000000000000000000000000000",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        0,
+        8
+      ],
+      "digit": 5,
+      "unit": "row 1",
+      "explanation": "5 appears twice in row 1 (r1c1, r1c9)."
+    }
+  },
+  {
+    "name": "duplicate in column",
+    "grid": "000000000000700000000000000000000000000000000000000000000000000000700000000000000",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        12,
+        66
+      ],
+      "digit": 7,
+      "unit": "column 4",
+      "explanation": "7 appears twice in column 4 (r2c4, r8c4)."
+    }
+  },
+  {
+    "name": "duplicate in box",
+    "grid": "000000000000000000000000000000300000000000000000003000000000000000000000000000000",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        30,
+        50
+      ],
+      "digit": 3,
+      "unit": "box 5",
+      "explanation": "3 appears twice in box 5 (r4c4, r6c6)."
+    }
+  },
+  {
+    "name": "digit three times in a row",
+    "grid": "000000000000000000000000000000000000000000000000000000000000000000000000800080008",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        72,
+        76,
+        80
+      ],
+      "digit": 8,
+      "unit": "row 9",
+      "explanation": "8 appears three times in row 9 (r9c1, r9c5, r9c9)."
+    }
+  },
+  {
+    "name": "row duplicate reported before column duplicate",
+    "grid": "200000000000000000000000000000000000006000060000000000000000000000000000200000000",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        38,
+        43
+      ],
+      "digit": 6,
+      "unit": "row 5",
+      "explanation": "6 appears twice in row 5 (r5c3, r5c8)."
+    }
+  },
+  {
+    "name": "lowest duplicated digit in the unit first",
+    "grid": "000000000000000000940000094000000000000000000000000000000000000000000000000000000",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        19,
+        26
+      ],
+      "digit": 4,
+      "unit": "row 3",
+      "explanation": "4 appears twice in row 3 (r3c2, r3c9)."
+    }
+  },
+  {
+    "name": "duplicate reported before no candidates",
+    "grid": "012345678000000000000000000000000000900000000000000000000000110000000000000000000",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        60,
+        61
+      ],
+      "digit": 1,
+      "unit": "row 7",
+      "explanation": "1 appears twice in row 7 (r7c7, r7c8)."
+    }
+  },
+  {
+    "name": "swapped digits in a solved grid",
+    "grid": "354678912672195348198342567859761423426853791713924856961537284287419635345286179",
+    "expected": {
+      "kind": "duplicate",
+      "cells": [
+        0,
+        72
+      ],
+      "digit": 3,
+      "unit": "column 1",
+      "explanation": "3 appears twice in column 1 (r1c1, r9c1)."
+    }
+  },
+  {
+    "name": "no candidates reported before digit nowhere",
+    "grid": "012345678000000000000000000000000000900000000000000000000000000000000000000000000",
+    "expected": {
+      "kind": "no_candidates",
+      "cells": [
+        0
+      ],
+      "digit": null,
+      "unit": null,
+      "explanation": "No digit can go in r1c1: every digit from 1 to 9 already appears in its row, column or box."
+    }
+  },
+  {
+    "name": "first cell without candidates in row-major order",
+    "grid": "012345678000000000000000000000000000900000000000000000000000009000000000123456780",
+    "expected": {
+      "kind": "no_candidates",
+      "cells": [
+        0
+      ],
+      "digit": null,
+      "unit": null,
+      "explanation": "No digit can go in r1c1: every digit from 1 to 9 already appears in its row, column or box."
+    }
+  },
+  {
+    "name": "digit nowhere in row",
+    "grid": "000123467500000000000000000000000000000000000000000000000000000000000000000000000",
+    "expected": {
+      "kind": "digit_nowhere",
+      "cells": [
+        0,
+        1,
+        2
+      ],
+      "digit": 5,
+      "unit": "row 1",
+      "explanation": "5 cannot be placed anywhere in row 1: it is missing there, but every empty cell of row 1 already sees a 5."
+    }
+  },
+  {
+    "name": "digit nowhere in column",
+    "grid": "050000000000000000000000000100000000200000000300000000400000000600000000700000000",
+    "expected": {
+      "kind": "digit_nowhere",
+      "cells": [
+        0,
+        9,
+        18
+      ],
+      "digit": 5,
+      "unit": "column 1",
+      "explanation": "5 cannot be placed anywhere in column 1: it is missing there, but every empty cell of column 1 already sees a 5."
+    }
+  },
+  {
+    "name": "digit nowhere in box",
+    "grid": "012050000304000000678000000000000000050000000000000000000000000000000000000000000",
+    "expected": {
+      "kind": "digit_nowhere",
+      "cells": [
+        0,
+        10
+      ],
+      "digit": 5,
+      "unit": "box 1",
+      "explanation": "5 cannot be placed anywhere in box 1: it is missing there, but every empty cell of box 1 already sees a 5."
+    }
+  },
+  {
+    "name": "row digit nowhere reported before box digit nowhere",
+    "grid": "012050000304000000678000000000000000050000000000000000000000000500000000000123467",
+    "expected": {
+      "kind": "digit_nowhere",
+      "cells": [
+        72,
+        73,
+        74
+      ],
+      "digit": 5,
+      "unit": "row 9",
+      "explanation": "5 cannot be placed anywhere in row 9: it is missing there, but every empty cell of row 9 already sees a 5."
+    }
+  }
+]

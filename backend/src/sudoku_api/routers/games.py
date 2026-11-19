@@ -10,7 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from sudoku_api.deps import CurrentUserDep, DbDep, PuzzleGeneratorDep, SettingsDep
 from sudoku_api.domain import Difficulty, GameStatus
 from sudoku_api.models import Game
-from sudoku_api.ratelimit import hint_rate_limit
+from sudoku_api.ratelimit import hint_rate_limit, search_rate_limit
 from sudoku_api.schemas.common import error_responses
 from sudoku_api.schemas.game import (
     CheckIn,
@@ -24,10 +24,18 @@ from sudoku_api.schemas.game import (
     NewGameIn,
     ScoreBreakdownOut,
 )
+from sudoku_api.schemas.search import (
+    Contradiction,
+    PropagateIn,
+    PropagateOut,
+    PropagationPlacementOut,
+    SearchCosts,
+    SearchTree,
+)
 from sudoku_api.services import games as game_service
 from sudoku_api.services.games import BoardUpdate
 from sudoku_api.services.puzzle_source import PuzzleSourceError
-from sudoku_api.services.scoring import hint_cost
+from sudoku_api.services.scoring import AUTO_PLACEMENT_PENALTY, hint_cost
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +60,11 @@ def game_out(game: Game) -> GameOut:
         updated_at=game.updated_at,
         completed_at=game.completed_at,
         hint_costs=HintCosts.model_validate({str(s): hint_cost(s) for s in (1, 2, 3)}),
+        search_tree=(
+            None if game.search_tree is None else SearchTree.model_validate(game.search_tree)
+        ),
+        auto_placements=game.auto_placements,
+        search_costs=SearchCosts(auto_placement=AUTO_PLACEMENT_PENALTY),
     )
 
 
@@ -61,6 +74,8 @@ def _update(body: GameUpdateIn) -> BoardUpdate:
         notes=body.notes,
         elapsed_seconds=body.elapsed_seconds,
         version=body.version,
+        update_search_tree="search_tree" in body.model_fields_set,
+        search_tree=None if body.search_tree is None else body.search_tree.model_dump(),
     )
 
 
@@ -124,7 +139,11 @@ def get_game(game_id: int, db: DbDep, user: CurrentUserDep) -> GameOut:
     "/{game_id}",
     response_model=GameOut,
     responses=error_responses(404, 409),
-    summary="Autosave board, notes and timer (optimistic lock on `version`)",
+    summary="Autosave board, notes, timer and search tree (optimistic lock on `version`)",
+    description=(
+        "`search_tree` is optional: omit it to keep the saved tree, send `null` to clear it. "
+        "Its `root_board` must keep the givens (422 `givens_modified`)."
+    ),
 )
 def save_game(game_id: int, body: GameUpdateIn, db: DbDep, user: CurrentUserDep) -> GameOut:
     return game_out(game_service.save_game(db, user, game_id, _update(body)))
@@ -147,6 +166,43 @@ def hint(game_id: int, body: HintIn, db: DbDep, user: CurrentUserDep) -> HintOut
         value=staged.value,
         explanation=staged.explanation,
         penalty=staged.penalty,
+    )
+
+
+@router.post(
+    "/{game_id}/search/propagate",
+    response_model=PropagateOut,
+    responses=error_responses(404, 409, 429),
+    dependencies=[Depends(search_rate_limit)],
+    summary="Search mode: direct implications (naked/hidden singles) of a node's board",
+    description=(
+        "Constraint-only (never compares with the solution). Every returned placement counts "
+        "as an auto placement and costs `search_costs.auto_placement` points. Does not change "
+        "`version`. 422 `givens_modified` if `board` changes a given."
+    ),
+)
+def search_propagate(
+    game_id: int, body: PropagateIn, db: DbDep, user: CurrentUserDep
+) -> PropagateOut:
+    result = game_service.propagate_for_game(db, user, game_id, body.board)
+    prop = result.propagation
+    c = prop.contradiction
+    return PropagateOut(
+        placements=[
+            PropagationPlacementOut(cell=p.cell, value=p.value, technique=p.technique)
+            for p in prop.placements
+        ],
+        contradiction=None
+        if c is None
+        else Contradiction(
+            kind=c.kind,
+            cells=list(c.cells),
+            digit=c.digit,
+            unit=c.unit,
+            explanation=c.explanation,
+        ),
+        penalty=result.penalty,
+        auto_placements=result.auto_placements,
     )
 
 
@@ -191,6 +247,7 @@ def complete(
             time_factor=breakdown.time_factor,
             hint_penalty=breakdown.hint_penalty,
             mistake_penalty=breakdown.mistake_penalty,
+            search_penalty=breakdown.search_penalty,
             total=breakdown.total,
         ),
     )

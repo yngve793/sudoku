@@ -1,4 +1,4 @@
-"""Benchmark count_solutions, rate and next_hint on seeded random puzzles.
+"""Benchmark the public API (solver, rater, hints, search mode) on seeded puzzles.
 
 Usage (from the repo root)::
 
@@ -21,7 +21,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sudoku_validator import Grid, count_solutions, next_hint, parse, rate
+from sudoku_validator import (
+    Grid,
+    count_solutions,
+    find_contradiction,
+    next_hint,
+    parse,
+    propagate,
+    rate,
+)
 from tests.puzzle_factory import random_puzzle
 from tests.reference import CLASSIC
 
@@ -73,6 +81,17 @@ def main() -> None:
 
     hint_times = [timed(partial(next_hint, g, g, s)) for g, s in puzzles]
     print("next_hint        ", summary(hint_times))
+
+    prop_times = [timed(partial(propagate, g)) for g, _ in puzzles]
+    print("propagate        ", summary(prop_times))
+    # Search-mode boards: the puzzle plus one guess in its first empty cell.
+    guesses: list[Grid] = []
+    for k, (g, _) in enumerate(puzzles):
+        cells = list(g)
+        cells[cells.index(0)] = 1 + k % 9
+        guesses.append(tuple(cells))
+    print("propagate (guess)", summary([timed(partial(propagate, g)) for g in guesses]))
+    print("find_contradiction", summary([timed(partial(find_contradiction, g)) for g in guesses]))
 
     print("\nclassic puzzles:")
     for name, text in CLASSIC.items():

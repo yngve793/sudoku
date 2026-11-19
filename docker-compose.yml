@@ -71,7 +71,11 @@ services:
       timeout: 3s
       retries: 20
       start_period: 10s
-    networks: [backend]
+    # Published on localhost only, for DB tools (psql, DBeaver, ...). Change the host port
+    # with POSTGRES_PORT. Bound to 127.0.0.1, so it is not reachable from the network.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    networks: [backend, dbhost]
     deploy:
       resources:
         limits: {cpus: "1.0", memory: 512M}
@@ -257,6 +261,9 @@ networks:
         - subnet: 10.89.28.0/24
   # Only for publishing Mailpit's web UI.
   mail:
+  # Only for publishing Postgres to 127.0.0.1 (the `backend` network is internal, and
+  # Docker can't publish ports from internal-only networks).
+  dbhost:
 
 volumes:
   pgdata:

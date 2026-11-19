@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sudoku_api.domain import Difficulty, GameStatus
 from sudoku_api.schemas.common import Grid, Notes
+from sudoku_api.schemas.search import SearchCosts, SearchTree
 
 ElapsedSeconds = Annotated[int, Field(ge=0, le=7 * 24 * 3600)]
 
@@ -45,6 +46,9 @@ class GameOut(BaseModel):
     updated_at: datetime
     completed_at: datetime | None
     hint_costs: HintCosts
+    search_tree: SearchTree | None = Field(description="The saved search-mode tree, if any")
+    auto_placements: int = Field(description="Cells auto-filled by search propagation")
+    search_costs: SearchCosts
 
 
 class GameUpdateIn(BaseModel):
@@ -54,6 +58,10 @@ class GameUpdateIn(BaseModel):
     notes: Notes = Field(default_factory=dict)
     elapsed_seconds: ElapsedSeconds
     version: Annotated[int, Field(ge=1)]
+    search_tree: SearchTree | None = Field(
+        default=None,
+        description="Search-mode tree. Omit to keep the saved tree; send null to clear it.",
+    )
 
 
 class HintIn(BaseModel):
@@ -92,6 +100,7 @@ class ScoreBreakdownOut(BaseModel):
     time_factor: float
     hint_penalty: int
     mistake_penalty: int
+    search_penalty: int
     total: int
 
 

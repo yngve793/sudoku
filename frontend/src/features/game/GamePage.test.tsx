@@ -1,5 +1,5 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { db, type MockGame } from '../../mocks/db'
 import { server } from '../../mocks/node'
@@ -157,6 +157,36 @@ describe('GamePage', () => {
     await waitFor(() => expect(serverGame(game.id).notes).toEqual({ [String(a)]: [2] }), {
       timeout: 500,
     })
+  })
+
+  it('concurrent flushes (hide + pagehide + beforeunload) never reuse a version', async () => {
+    const statuses: number[] = []
+    server.events.on('response:mocked', ({ request, response }) => {
+      if (request.method === 'PATCH') statuses.push(response.status)
+    })
+    // Slow saves so the later flushes really wait on the in-flight one.
+    server.use(
+      http.patch('*/api/v1/games/:id', async () => {
+        await delay(150)
+        return undefined
+      }),
+    )
+    const { user, game } = await openGame()
+    const a = firstEmptyIndex(game)
+    await user.click(cell(a))
+    await user.keyboard('n2')
+    act(() => setVisibility('hidden')) // save #1 in flight
+    await user.keyboard('n5') // another change (a digit) while it is in flight
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'))
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    await waitFor(() => expect(serverGame(game.id).current[a]).toBe('5'), { timeout: 2000 })
+    await new Promise((r) => setTimeout(r, 400))
+    expect(statuses.length).toBeGreaterThanOrEqual(2)
+    expect(statuses.every((s) => s === 200)).toBe(true)
+    expect(screen.queryByText(/changed in another tab or device/)).toBeNull()
+    server.events.removeAllListeners()
   })
 
   it('reloads the server board and tells the user on a 409 conflict', async () => {

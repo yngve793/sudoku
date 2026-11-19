@@ -98,9 +98,13 @@ test('register -> verify -> play -> hint -> check against the real API', async (
   await page.getByRole('button', { name: 'Check' }).click()
   await expect(page.getByText(/No mistakes so far|incorrect cells? (is|are) marked/)).toBeVisible()
 
-  // Reload: session from the refresh cookie, board and notes resumed.
+  // Reload: session from the refresh cookie, board and notes resumed. (The hint
+  // may have filled the noted cell, so compare with its label before reloading.)
+  const notedCell = grid.getByRole('gridcell', { name: new RegExp(`^${prefix} `) })
+  const before = await notedCell.getAttribute('aria-label')
+  await expect(page.getByText('Saved')).toBeVisible({ timeout: 5000 })
   await page.reload()
-  await expect(grid.getByRole('gridcell', { name: `${prefix} empty, notes 3` })).toBeVisible()
+  await expect(notedCell).toHaveAttribute('aria-label', before!)
 
   await page.getByRole('link', { name: 'Leaderboard' }).click()
   await expect(page.getByRole('table').or(page.getByText(/No scores yet/))).toBeVisible()

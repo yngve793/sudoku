@@ -83,6 +83,11 @@
       },
       "CompletedGameOut": {
         "properties": {
+          "auto_placements": {
+            "description": "Cells auto-filled by search propagation",
+            "title": "Auto Placements",
+            "type": "integer"
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -149,6 +154,20 @@
           "score_breakdown": {
             "$ref": "#/components/schemas/ScoreBreakdownOut"
           },
+          "search_costs": {
+            "$ref": "#/components/schemas/SearchCosts"
+          },
+          "search_tree": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchTree"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The saved search-mode tree, if any"
+          },
           "started_at": {
             "format": "date-time",
             "title": "Started At",
@@ -183,9 +202,77 @@
           "updated_at",
           "completed_at",
           "hint_costs",
+          "search_tree",
+          "auto_placements",
+          "search_costs",
           "score_breakdown"
         ],
         "title": "CompletedGameOut",
+        "type": "object"
+      },
+      "Contradiction": {
+        "additionalProperties": false,
+        "description": "A constraint violation (never a comparison with the solution).",
+        "properties": {
+          "cells": {
+            "items": {
+              "maximum": 80.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "maxItems": 81,
+            "title": "Cells",
+            "type": "array"
+          },
+          "digit": {
+            "anyOf": [
+              {
+                "maximum": 9.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digit"
+          },
+          "explanation": {
+            "maxLength": 500,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "duplicate",
+              "no_candidates",
+              "digit_nowhere"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"row 3\" / \"column 5\" / \"box 2\" (1-based); null for no_candidates",
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "kind",
+          "cells",
+          "digit",
+          "unit",
+          "explanation"
+        ],
+        "title": "Contradiction",
         "type": "object"
       },
       "Difficulty": {
@@ -236,6 +323,11 @@
       "GameOut": {
         "description": "Game state. Deliberately has no `solution` field.",
         "properties": {
+          "auto_placements": {
+            "description": "Cells auto-filled by search propagation",
+            "title": "Auto Placements",
+            "type": "integer"
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -299,6 +391,20 @@
             ],
             "title": "Score"
           },
+          "search_costs": {
+            "$ref": "#/components/schemas/SearchCosts"
+          },
+          "search_tree": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchTree"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The saved search-mode tree, if any"
+          },
           "started_at": {
             "format": "date-time",
             "title": "Started At",
@@ -332,7 +438,10 @@
           "started_at",
           "updated_at",
           "completed_at",
-          "hint_costs"
+          "hint_costs",
+          "search_tree",
+          "auto_placements",
+          "search_costs"
         ],
         "title": "GameOut",
         "type": "object"
@@ -371,6 +480,17 @@
             },
             "title": "Notes",
             "type": "object"
+          },
+          "search_tree": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchTree"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Search-mode tree. Omit to keep the saved tree; send null to clear it."
           },
           "version": {
             "minimum": 1.0,
@@ -765,6 +885,90 @@
         "title": "NewGameIn",
         "type": "object"
       },
+      "PropagateIn": {
+        "properties": {
+          "board": {
+            "description": "The selected node's board; must keep the givens",
+            "maxLength": 81,
+            "minLength": 81,
+            "pattern": "^[0-9]{81}$",
+            "title": "Board",
+            "type": "string"
+          }
+        },
+        "required": [
+          "board"
+        ],
+        "title": "PropagateIn",
+        "type": "object"
+      },
+      "PropagateOut": {
+        "properties": {
+          "auto_placements": {
+            "description": "Total auto-filled cells for this game so far",
+            "title": "Auto Placements",
+            "type": "integer"
+          },
+          "contradiction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Contradiction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "penalty": {
+            "description": "Points this call deducts from the final score",
+            "title": "Penalty",
+            "type": "integer"
+          },
+          "placements": {
+            "description": "In the order found",
+            "items": {
+              "$ref": "#/components/schemas/PropagationPlacementOut"
+            },
+            "title": "Placements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "placements",
+          "contradiction",
+          "penalty",
+          "auto_placements"
+        ],
+        "title": "PropagateOut",
+        "type": "object"
+      },
+      "PropagationPlacementOut": {
+        "properties": {
+          "cell": {
+            "title": "Cell",
+            "type": "integer"
+          },
+          "technique": {
+            "enum": [
+              "Naked Single",
+              "Hidden Single"
+            ],
+            "title": "Technique",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cell",
+          "value",
+          "technique"
+        ],
+        "title": "PropagationPlacementOut",
+        "type": "object"
+      },
       "RegisterIn": {
         "properties": {
           "email": {
@@ -832,6 +1036,10 @@
             "title": "Par Seconds",
             "type": "integer"
           },
+          "search_penalty": {
+            "title": "Search Penalty",
+            "type": "integer"
+          },
           "time_factor": {
             "title": "Time Factor",
             "type": "number"
@@ -847,6 +1055,7 @@
           "time_factor",
           "hint_penalty",
           "mistake_penalty",
+          "search_penalty",
           "total"
         ],
         "title": "ScoreBreakdownOut",
@@ -941,6 +1150,218 @@
           "history"
         ],
         "title": "ScoresMeOut",
+        "type": "object"
+      },
+      "SearchChoice": {
+        "additionalProperties": false,
+        "description": "The hypothesis of a node: \"what if `cell` = `value`?\".",
+        "properties": {
+          "cell": {
+            "maximum": 80.0,
+            "minimum": 0.0,
+            "title": "Cell",
+            "type": "integer"
+          },
+          "value": {
+            "maximum": 9.0,
+            "minimum": 1.0,
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cell",
+          "value"
+        ],
+        "title": "SearchChoice",
+        "type": "object"
+      },
+      "SearchCosts": {
+        "properties": {
+          "auto_placement": {
+            "description": "Points deducted per auto-filled cell",
+            "title": "Auto Placement",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "auto_placement"
+        ],
+        "title": "SearchCosts",
+        "type": "object"
+      },
+      "SearchNode": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_cell": {
+            "anyOf": [
+              {
+                "maximum": 80.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set on a parent whose children came from 'branch on all candidates'",
+            "title": "Branch Cell"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "collapsed": {
+            "title": "Collapsed",
+            "type": "boolean"
+          },
+          "contradiction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Contradiction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/SearchPlacement"
+            },
+            "maxItems": 81,
+            "title": "Placements",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "dead",
+              "solved"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "parent_id",
+          "choice",
+          "placements",
+          "status",
+          "contradiction",
+          "branch_cell",
+          "collapsed"
+        ],
+        "title": "SearchNode",
+        "type": "object"
+      },
+      "SearchPlacement": {
+        "additionalProperties": false,
+        "description": "An implication entered by the player (`manual`) or returned by propagate (`auto`).",
+        "properties": {
+          "cell": {
+            "maximum": 80.0,
+            "minimum": 0.0,
+            "title": "Cell",
+            "type": "integer"
+          },
+          "source": {
+            "enum": [
+              "manual",
+              "auto"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "maximum": 9.0,
+            "minimum": 1.0,
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cell",
+          "value",
+          "source"
+        ],
+        "title": "SearchPlacement",
+        "type": "object"
+      },
+      "SearchTree": {
+        "additionalProperties": false,
+        "description": "The persisted search tree. Stored as is; scoring never trusts it.",
+        "properties": {
+          "mode": {
+            "enum": [
+              "manual",
+              "auto"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/SearchNode"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Nodes",
+            "type": "array"
+          },
+          "root_board": {
+            "maxLength": 81,
+            "minLength": 81,
+            "pattern": "^[0-9]{81}$",
+            "title": "Root Board",
+            "type": "string"
+          },
+          "selected_node_id": {
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Selected Node Id",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "root_board",
+          "mode",
+          "selected_node_id",
+          "nodes"
+        ],
+        "title": "SearchTree",
         "type": "object"
       },
       "TokenOut": {
@@ -1708,6 +2129,7 @@
         ]
       },
       "patch": {
+        "description": "`search_tree` is optional: omit it to keep the saved tree, send `null` to clear it. Its `root_board` must keep the givens (422 `givens_modified`).",
         "operationId": "save_game_api_v1_games__game_id__patch",
         "parameters": [
           {
@@ -1787,7 +2209,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Autosave board, notes and timer (optimistic lock on `version`)",
+        "summary": "Autosave board, notes, timer and search tree (optimistic lock on `version`)",
         "tags": [
           "games"
         ]
@@ -2074,6 +2496,104 @@
           }
         ],
         "summary": "Next hint at stage 1 (technique + region), 2 (cells) or 3 (value)",
+        "tags": [
+          "games"
+        ]
+      }
+    },
+    "/api/v1/games/{game_id}/search/propagate": {
+      "post": {
+        "description": "Constraint-only (never compares with the solution). Every returned placement counts as an auto placement and costs `search_costs.auto_placement` points. Does not change `version`. 422 `givens_modified` if `board` changes a given.",
+        "operationId": "search_propagate_api_v1_games__game_id__search_propagate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "title": "Game Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PropagateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropagateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not authenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Rate limited"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search mode: direct implications (naked/hidden singles) of a node's board",
         "tags": [
           "games"
         ]

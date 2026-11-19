@@ -14,6 +14,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:perf": "VITE_PERF=true vitest run src/features/search/SearchGraph.perf.test.tsx",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
     "gen:api": "openapi-typescript ../backend/openapi.json -o src/api/schema.gen.ts",

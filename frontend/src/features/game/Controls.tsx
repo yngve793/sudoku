@@ -4,12 +4,15 @@ interface ControlsProps {
   canRedo: boolean
   disabled: boolean
   checking: boolean
+  /** A search tree already exists (the button resumes it). */
+  hasSearchTree?: boolean
   onUndo: () => void
   onRedo: () => void
   onErase: () => void
   onToggleNotes: () => void
   onHint: () => void
   onCheck: () => void
+  onSearch?: () => void
 }
 
 function Icon({ path }: { path: string }) {
@@ -28,6 +31,7 @@ const ICONS = {
   notes: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z',
   hint: 'M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2Z',
   check: 'M20 6 9 17l-5-5',
+  search: 'M12 3v5M12 8 6 14M12 8l6 6M6 14v4M18 14v4M4 20h4M16 20h4',
 }
 
 export function Controls(props: ControlsProps) {
@@ -94,6 +98,18 @@ export function Controls(props: ControlsProps) {
         <Icon path={ICONS.check} />
         <span>{props.checking ? 'Checking…' : 'Check'}</span>
       </button>
+      {props.onSearch && (
+        <button
+          type="button"
+          className="control"
+          onClick={props.onSearch}
+          disabled={disabled}
+          aria-keyshortcuts="S"
+        >
+          <Icon path={ICONS.search} />
+          <span>{props.hasSearchTree ? 'Search…' : 'Search'}</span>
+        </button>
+      )}
     </div>
   )
 }

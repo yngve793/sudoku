@@ -24,6 +24,9 @@ GAME_FIELDS = {
     "updated_at",
     "completed_at",
     "hint_costs",
+    "search_tree",
+    "auto_placements",
+    "search_costs",
 }
 
 

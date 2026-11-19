@@ -15,12 +15,19 @@ export interface CellProps {
   conflict: boolean
   wrong: boolean
   hinted: boolean
+  searchOrigin?: 'choice' | 'manual' | 'auto' | null
+  /** The search origin belongs to the selected node itself (not an ancestor). */
+  searchOwn?: boolean
+  contradiction?: boolean
+  /** Search: the graph step currently viewed placed this cell. */
+  step?: boolean
   onSelect: (index: number) => void
   cellRef: (index: number, el: HTMLDivElement | null) => void
 }
 
 function CellImpl(props: CellProps) {
   const { index, value, notes, given, selected, peer, sameDigit, conflict, wrong, hinted } = props
+  const { searchOrigin, contradiction = false } = props
   const row = rowOf(index)
   const col = colOf(index)
   const className = [
@@ -32,6 +39,10 @@ function CellImpl(props: CellProps) {
     conflict && 'cell--conflict',
     wrong && 'cell--wrong',
     hinted && 'cell--hint',
+    value !== 0 && searchOrigin && `cell--${searchOrigin}`,
+    value !== 0 && searchOrigin && props.searchOwn && 'cell--own',
+    contradiction && 'cell--contradiction',
+    props.step && 'cell--step',
     col % 3 === 2 && col !== 8 && 'cell--box-right',
     row % 3 === 2 && row !== 8 && 'cell--box-bottom',
   ]
@@ -68,9 +79,9 @@ function CellImpl(props: CellProps) {
           ))}
         </span>
       ) : null}
-      {(conflict || wrong) && (
+      {(conflict || wrong || contradiction) && (
         <span className="cell__flag" aria-hidden="true">
-          {wrong ? '✕' : '!'}
+          {wrong || contradiction ? '✕' : '!'}
         </span>
       )}
     </div>

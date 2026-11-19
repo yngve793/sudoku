@@ -5,6 +5,7 @@ import itertools
 import pytest
 from sudoku_api.domain import Difficulty
 from sudoku_api.services.scoring import (
+    AUTO_PLACEMENT_PENALTY,
     BASE_POINTS,
     PAR_SECONDS,
     compute_score,
@@ -50,3 +51,17 @@ def test_floored_at_zero() -> None:
 
 def test_stage_costs_increase() -> None:
     assert hint_cost(1) < hint_cost(2) < hint_cost(3)
+
+
+def test_search_penalty() -> None:
+    assert AUTO_PLACEMENT_PENALTY == 2
+    s = compute_score(Difficulty.medium, 0, [1], 1, auto_placements=12)
+    assert s.search_penalty == 24
+    assert s.total == 375 - 10 - 15 - 24
+    assert compute_score(Difficulty.medium, 0, [], 0).search_penalty == 0
+
+
+def test_search_penalty_floored_at_zero() -> None:
+    s = compute_score(Difficulty.beginner, 0, [], 0, auto_placements=81 * 10)
+    assert s.search_penalty == 1620
+    assert s.total == 0
