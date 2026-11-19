@@ -450,19 +450,27 @@ def propagate(grid: Grid, *, max_placements: int = 81) -> Propagation
 
 ## 6. Agents and ownership
 
-Each agent is defined in `.claude/agents/` and **owns exactly one folder**. It may read other folders but must not edit them. Changes to a contract (section 5 APIs, endpoints, DB schema) are reported back to the orchestrator rather than made unilaterally.
+Agents are defined in `.claude/agents/`. Who may change which files is defined **in one place**, `.claude/ownership.toml`, and checked by `scripts/check_ownership.py`. Project-wide rules, commands and the report format are in `CLAUDE.md`, and each area keeps handoff notes in its `AGENTS.md`.
 
-| Agent | Owns | Depends on |
-|---|---|---|
-| `sudoku-validator` | `validator/` | — |
-| `sudoku-generator` | `generator/` | validator public API |
-| `sudoku-api` | `backend/` | generator + validator public API |
-| `sudoku-frontend` | `frontend/` | API contract (OpenAPI) |
-| `sudoku-docker` | Dockerfiles, `frontend/nginx.conf`, compose files, `.dockerignore`, `docker/`, Docker CI job | everything (read-only) |
+| Agent | Owns | Depends on | Notes file |
+|---|---|---|---|
+| `sudoku-validator` | `validator/`, `uv.lock` (shared) | — | `validator/AGENTS.md` |
+| `sudoku-generator` | `generator/`, `uv.lock` (shared) | validator public API | `generator/AGENTS.md` |
+| `sudoku-api` | `backend/` (except container files), `.env.example`, `uv.lock` | generator + validator public API | `backend/AGENTS.md` |
+| `sudoku-frontend` | `frontend/` (except container files) | `backend/openapi.json` | `frontend/AGENTS.md` |
+| `sudoku-docker` | Dockerfiles, entrypoint, `nginx.conf`, compose files, `.dockerignore`, `docker/`, CI docker job, Docker section of `.env.example` | everything (read-only) | `docker/AGENTS.md` |
+| `sudoku-reviewer` | nothing (read-only) | — | — |
 
-Container files inside `backend/` and `frontend/` (`Dockerfile`, `docker-entrypoint.sh`, `nginx.conf`, the dockerignore files) belong to `sudoku-docker`, not to the folder's agent.
+The orchestrator (the main session) owns everything no agent owns: PLAN.md, CLAUDE.md, the agent definitions, `scripts/`, CI and the README. It also shares `ci.yml`, `.env.example`, `uv.lock` and the `*/AGENTS.md` notes.
 
-The orchestrator (main session) owns the remaining root files: workspace `pyproject.toml`, CI (apart from the docker job), README and this plan.
+**Process** (details in CLAUDE.md):
+1. **Contract first:** PLAN.md §5 and `backend/openapi.json`. For an HTTP change, the backend publishes the schema, the frontend runs `gen:api`, and then both build in parallel.
+2. **One fresh agent per feature,** which starts from its `AGENTS.md`. Resume an agent only for short follow-ups.
+3. **After each agent:**
+   - `check_ownership.py <agent>`;
+   - `./scripts/verify.sh --only <areas>`, with `--full` for cross-boundary work.
+4. **Before each commit,** `sudoku-reviewer` reviews the diff.
+5. **CI** runs the same checks. It also checks that the generated API types aren't stale. A nightly job runs `verify.sh --full --repeat 5` to catch flaky tests.
 
 ## 7. Execution phases
 

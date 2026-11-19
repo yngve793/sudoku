@@ -3,8 +3,8 @@
 #   cp .env.example .env            # then set JWT_SECRET (>= 32 chars)
 #   docker compose up --build -d --wait
 #
-#   App:      http://localhost:8080  (SPA + same-origin /api/ proxy; the only entry point)
-#   Mailpit:  http://localhost:8025  (catches all outgoing email, e.g. verification links)
+#   App:      http://localhost:8080  (APP_PORT; SPA + same-origin /api/ proxy; the only entry point)
+#   Mailpit:  http://localhost:8025  (MAILPIT_PORT; catches all outgoing email, e.g. verification links)
 #
 # Optional one-shot to pre-fill the puzzle pool (see backend/README.md):
 #   docker compose --profile tools run --rm seed
@@ -15,10 +15,18 @@
 #   JWT_SECRET                      required, >= 32 chars
 #   POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB   default sudoku/sudoku/sudoku
 #                                   (the password is embedded in DATABASE_URL: avoid @ : / ? #)
-#   APP_URL                         public URL of the app, used in email links (default
-#                                   http://localhost:8080). DATABASE_URL, CORS_ORIGINS,
+#   APP_PORT                        host port of the app (nginx), default 8080
+#   APP_URL                         public URL of the app, used in email links and CORS
+#                                   (default http://localhost:${APP_PORT}). DATABASE_URL, CORS_ORIGINS,
 #                                   FRONTEND_URL, SMTP_HOST/PORT from .env are deliberately
 #                                   NOT used here: they describe the non-Docker local setup.
+#   MAILPIT_PORT                    host port of the Mailpit UI/API, default 8025
+#   POSTGRES_PORT                   host port of Postgres (127.0.0.1 only), default 5432
+#   API_IMAGE / FRONTEND_IMAGE      image tags, default sudoku-api:local / sudoku-frontend:local
+#   EDGE_SUBNET                     subnet of the `edge` network, default 10.89.28.0/24; also
+#                                   the api's FORWARDED_ALLOW_IPS
+#   A second, isolated instance (e.g. scripts/verify.sh) sets all of these plus `-p <project>`
+#   so it never retags the user's images or collides on ports/subnets.
 #   Tunables passed through with the app defaults: token TTLs, COOKIE_SECURE, rate limits,
 #   POOL_*, GENERATION_TIMEOUT_SECONDS, LEADERBOARD_CACHE_SECONDS, LOG_LEVEL, EMAIL_FROM.
 #
@@ -41,7 +49,7 @@ x-hardening: &hardening
 x-db-url: &db-url postgresql+psycopg://${POSTGRES_USER:-sudoku}:${POSTGRES_PASSWORD:-sudoku}@postgres:5432/${POSTGRES_DB:-sudoku}
 
 x-api-image: &api-image
-  image: sudoku-api:local
+  image: ${API_IMAGE:-sudoku-api:local}
   build:
     context: .
     dockerfile: backend/Dockerfile
@@ -95,7 +103,7 @@ services:
     ports:
       # Web UI + API, localhost only (it shows every email, incl. reset links).
       # SMTP (1025) stays on the internal network.
-      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
     healthcheck:
       test: ["CMD", "/mailpit", "readyz"]
       interval: 10s
@@ -149,8 +157,8 @@ services:
       RESET_PASSWORD_TTL_MINUTES: ${RESET_PASSWORD_TTL_MINUTES:-60}
       # The SPA and the API share one origin through nginx (the refresh cookie is
       # SameSite=strict, Path=/api/v1/auth), so CORS only needs that origin.
-      FRONTEND_URL: ${APP_URL:-http://localhost:8080}
-      CORS_ORIGINS: ${APP_URL:-http://localhost:8080}
+      FRONTEND_URL: ${APP_URL:-http://localhost:${APP_PORT:-8080}}
+      CORS_ORIGINS: ${APP_URL:-http://localhost:${APP_PORT:-8080}}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}   # plain-HTTP localhost; set true behind TLS
       COOKIE_SAMESITE: ${COOKIE_SAMESITE:-strict}
       EMAIL_BACKEND: smtp
@@ -176,7 +184,7 @@ services:
       LOG_JSON: "true"
       # Port 8000 is NOT published: only containers on the `edge` network (i.e. nginx)
       # reach the api, so trusting X-Forwarded-* from that subnet is safe.
-      FORWARDED_ALLOW_IPS: 10.89.28.0/24
+      FORWARDED_ALLOW_IPS: ${EDGE_SUBNET:-10.89.28.0/24}
     read_only: true
     tmpfs:
       - /tmp
@@ -193,14 +201,14 @@ services:
 
   frontend:
     <<: *hardening
-    image: sudoku-frontend:local
+    image: ${FRONTEND_IMAGE:-sudoku-frontend:local}
     build:
       context: frontend
     depends_on:
       api:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "${APP_PORT:-8080}:8080"
     read_only: true
     tmpfs:
       - /tmp       # nginx-unprivileged keeps its pid file and temp paths here
@@ -252,13 +260,13 @@ networks:
   # Postgres, migrations, the api and Mailpit's SMTP side. No outside access at all.
   backend:
     internal: true
-  # nginx <-> api (and Vite in dev). Fixed subnet so the api can trust X-Forwarded-For
-  # from it. Deliberately outside Docker's default auto-allocation pools (172.17-31.x,
+  # nginx <-> api (and Vite in dev). Fixed subnet (EDGE_SUBNET) so the api can trust
+  # X-Forwarded-For from it; a second project on the same host needs a different one. Deliberately outside Docker's default auto-allocation pools (172.17-31.x,
   # 192.168.x): an auto-created network could otherwise take it first ("Pool overlaps").
   edge:
     ipam:
       config:
-        - subnet: 10.89.28.0/24
+        - subnet: ${EDGE_SUBNET:-10.89.28.0/24}
   # Only for publishing Mailpit's web UI.
   mail:
   # Only for publishing Postgres to 127.0.0.1 (the `backend` network is internal, and

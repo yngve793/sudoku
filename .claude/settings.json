@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(brew install *)",
+      "Bash(brew upgrade *)",
+      "Bash(apt-get install *)",
+      "Bash(apt install *)",
+      "Bash(npm install -g *)",
+      "Bash(npm i -g *)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Bash(npm install --global *)",
+      "Bash(npm -g *)",
+      "Bash(uv tool install *)",
+      "Bash(pipx install *)",
+      "Bash(cat .env)",
+      "Bash(cat ./.env)",
+      "Bash(source .env)",
+      "Bash(. .env)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(rm -rf *)",
+      "Bash(docker volume rm *)",
+      "Bash(docker compose down -v *)",
+      "Bash(docker system prune *)",
+      "Bash(docker compose down *)",
+      "Bash(docker-compose down *)",
+      "Bash(docker volume prune *)"
+    ]
+  }
+}

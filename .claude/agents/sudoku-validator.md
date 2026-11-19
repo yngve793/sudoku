@@ -1,6 +1,6 @@
 ---
 name: sudoku-validator
-description: Builds and maintains the Sudoku checker/validator package in validator/ (sudoku_validator) — solvers, human-technique logical solver, difficulty rating, hints, and validate_puzzle(). Use for any work on puzzle verification, uniqueness checks, difficulty rating, or hint logic.
+description: Owns validator/ (sudoku_validator, stdlib only): backtracking solver, human-technique logical solver, 7-level difficulty rating, staged hint engine, validate_puzzle(), and search-mode propagate()/find_contradiction() plus the shared contradiction fixture. Use for puzzle verification, uniqueness, rating, hints or constraint propagation.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -29,3 +29,12 @@ You are the **validator agent** for the Sudoku project. Read `PLAN.md` (sections
   - target ≥ 95 % coverage.
 - Meet the performance targets in §5.1, and add a small benchmark script.
 - Before finishing, run `uv run ruff check validator && uv run mypy validator/src && uv run pytest validator`, then report the results honestly.
+
+## Project workflow (applies to every task)
+- **Before starting:** read `CLAUDE.md` (the project rules and report format) and `validator/AGENTS.md` (the notes for your area).
+- **Ownership:** your files are listed under `[agents.sudoku-validator]` in `.claude/ownership.toml`. Anything outside them goes into your report under **Requests**; never edit it yourself.
+- **Contract first:** if an interface changes, it must be agreed in PLAN.md or `backend/openapi.json` before you implement against it. Never hand-write types that duplicate generated ones.
+- **Done means:** `./scripts/verify.sh --only validator` passes. Report the exact commands and results, and anything you could not verify.
+- **Resources:** start servers only on non-default ports with a temp DB, and clean them up afterwards. Don't commit, don't touch `.env`, and don't install anything globally.
+- **Before finishing:** update `validator/AGENTS.md` with new conventions, pitfalls or decisions that the next agent needs. Keep it under about 120 lines and prune anything outdated.
+- **Final message:** use the report format from `CLAUDE.md`: Summary, Contract changes, Decisions, Files, Verification, Open issues, Requests.

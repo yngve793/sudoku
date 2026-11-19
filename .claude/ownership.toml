@@ -1,0 +1,43 @@
+# Which files each agent may change. Checked by scripts/check_ownership.py.
+#
+# Pattern rules:
+#   "dir/"   -> everything under that directory (recursive)
+#   other    -> fnmatch glob against the repo-relative path ("*" also matches "/")
+# `exclude` wins over `paths`.
+# The orchestrator (main session) is implicit: it owns exactly the files no agent below owns
+# (PLAN.md, CLAUDE.md, .claude/, scripts/, root docs, CI except the docker job, ...).
+#
+# Shared files (uv.lock, .env.example) are append-style: only add your own entries, and never
+# run two agents that change the same shared file at the same time.
+
+[agents.sudoku-validator]
+paths = ["validator/", "uv.lock"]
+
+[agents.sudoku-generator]
+paths = ["generator/", "uv.lock"]
+
+[agents.sudoku-api]
+paths = ["backend/", ".env.example", "uv.lock"]
+exclude = ["backend/Dockerfile", "backend/Dockerfile.dockerignore", "backend/docker-entrypoint.sh"]
+
+[agents.sudoku-frontend]
+paths = ["frontend/"]
+exclude = ["frontend/Dockerfile", "frontend/.dockerignore", "frontend/nginx.conf"]
+
+[agents.sudoku-docker]
+# ci.yml: only the `docker` job (not enforceable per job; the reviewer checks it).
+# .env.example: only the Docker-only section.
+paths = [
+  "docker-compose.yml", "compose.*.yml", ".dockerignore", "docker/",
+  "backend/Dockerfile", "backend/Dockerfile.dockerignore", "backend/docker-entrypoint.sh",
+  "frontend/Dockerfile", "frontend/.dockerignore", "frontend/nginx.conf",
+  ".github/workflows/ci.yml", ".env.example",
+]
+
+[agents.sudoku-reviewer]
+# Read-only: may not change any file.
+paths = []
+
+[orchestrator]
+# Implicit owner of everything no agent owns, plus these shared files.
+also = [".github/workflows/ci.yml", ".env.example", "uv.lock", "*/AGENTS.md"]

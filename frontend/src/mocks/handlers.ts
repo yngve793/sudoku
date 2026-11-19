@@ -123,6 +123,11 @@ function findGame(user: MockUser, id: string | readonly string[] | undefined): M
   return db.games.find((g) => g.id === Number(id) && g.user_id === user.id) ?? null
 }
 
+/** FastAPI `game_id: int` path parameter. */
+const GAME_ID_RE = /^-?\d+$/
+const badGameId = () =>
+  validation('path.game_id: Input should be a valid integer, unable to parse string as an integer')
+
 const gameNotFound = () => err(404, 'not_found', 'Game not found')
 const notInProgress = () => err(409, 'game_not_in_progress', 'This game is no longer in progress')
 
@@ -186,6 +191,24 @@ const badDifficulty = () =>
     "query.difficulty: Input should be 'beginner', 'easy', 'medium', 'hard', 'expert', 'master' or 'extreme'",
   )
 const badPeriod = () => validation("query.period: Input should be 'day', 'week' or 'all'")
+
+/** FastAPI `Query(default, ge=min, le=max)` integer parameter: value or a 422 message. */
+function intQuery(
+  url: URL,
+  name: string,
+  fallback: number,
+  min: number,
+  max = Infinity,
+): number | string {
+  const raw = url.searchParams.get(name)
+  if (raw === null) return fallback
+  const value = /^-?\d+$/.test(raw.trim()) ? Number(raw) : NaN
+  if (!Number.isInteger(value))
+    return `query.${name}: Input should be a valid integer, unable to parse string as an integer`
+  if (value < min) return `query.${name}: Input should be greater than or equal to ${min}`
+  if (value > max) return `query.${name}: Input should be less than or equal to ${max}`
+  return value
+}
 
 function userStats(user: MockUser): Me['stats'] {
   const games = db.games.filter((g) => g.user_id === user.id)
@@ -514,6 +537,7 @@ export const handlers = [
   http.get(`${API}/games/:id`, ({ request, params }) => {
     const user = currentUser(request)
     if (!user) return unauthorized(request)
+    if (!GAME_ID_RE.test(String(params.id))) return badGameId()
     const game = findGame(user, params.id)
     if (!game) return gameNotFound()
     return HttpResponse.json(toWireGame(game))
@@ -522,6 +546,7 @@ export const handlers = [
   http.patch(`${API}/games/:id`, async ({ request, params }) => {
     const user = currentUser(request)
     if (!user) return unauthorized(request)
+    if (!GAME_ID_RE.test(String(params.id))) return badGameId()
     const body = await json<GameUpdateRequest>(request)
     const current = body.current ?? ''
     if (!GRID_RE.test(current))
@@ -559,6 +584,7 @@ export const handlers = [
   http.post(`${API}/games/:id/hint`, async ({ request, params }) => {
     const user = currentUser(request)
     if (!user) return unauthorized(request)
+    if (!GAME_ID_RE.test(String(params.id))) return badGameId()
     const { stage } = await json<{ stage: number }>(request)
     if (stage !== 1 && stage !== 2 && stage !== 3)
       return validation('stage: Input should be 1, 2 or 3')
@@ -577,6 +603,7 @@ export const handlers = [
   http.post(`${API}/games/:id/search/propagate`, async ({ request, params }) => {
     const user = currentUser(request)
     if (!user) return unauthorized(request)
+    if (!GAME_ID_RE.test(String(params.id))) return badGameId()
     const { board = '' } = await json<{ board: string }>(request)
     if (!GRID_RE.test(board)) return validation("board: String should match pattern '^[0-9]{81}$'")
     const game = findGame(user, params.id)
@@ -598,6 +625,7 @@ export const handlers = [
   http.post(`${API}/games/:id/check`, ({ request, params }) => {
     const user = currentUser(request)
     if (!user) return unauthorized(request)
+    if (!GAME_ID_RE.test(String(params.id))) return badGameId()
     const game = findGame(user, params.id)
     if (!game) return gameNotFound()
     if (game.status !== 'in_progress') return notInProgress()
@@ -612,6 +640,7 @@ export const handlers = [
   http.post(`${API}/games/:id/complete`, ({ request, params }) => {
     const user = currentUser(request)
     if (!user) return unauthorized(request)
+    if (!GAME_ID_RE.test(String(params.id))) return badGameId()
     const game = findGame(user, params.id)
     if (!game) return gameNotFound()
     if (game.status !== 'in_progress') return notInProgress()
@@ -634,8 +663,10 @@ export const handlers = [
     const user = currentUser(request)
     if (!user) return unauthorized(request)
     const url = new URL(request.url)
-    const limit = Number(url.searchParams.get('limit') ?? 50)
-    const offset = Number(url.searchParams.get('offset') ?? 0)
+    const limit = intQuery(url, 'limit', 50, 1, 200)
+    if (typeof limit === 'string') return validation(limit)
+    const offset = intQuery(url, 'offset', 0, 0)
+    if (typeof offset === 'string') return validation(offset)
     const mine = db.games.filter((g) => g.user_id === user.id)
     const completed = mine
       .filter((g) => g.status === 'completed')
@@ -681,9 +712,8 @@ export const handlers = [
     if (!difficulty.ok) return badDifficulty()
     const period = parsePeriod(url.searchParams.get('period'))
     if (!period) return badPeriod()
-    const limit = Number(url.searchParams.get('limit') ?? 20)
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-      return validation('query.limit: Input should be less than or equal to 100')
+    const limit = intQuery(url, 'limit', 20, 1, 100)
+    if (typeof limit === 'string') return validation(limit)
     const entries = rankedEntries(difficulty.value, period).slice(0, limit).map(publicEntry)
     return HttpResponse.json({ difficulty: difficulty.value, period, entries })
   }),

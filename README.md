@@ -38,7 +38,7 @@ docker compose up --build -d --wait
 
 - App: <http://localhost:8080>. nginx serves the SPA and proxies `/api/` to the API on the same origin, which the `SameSite=strict` refresh cookie requires.
 - Mailpit (catches verification and password-reset emails): <http://localhost:8025>, bound to localhost only.
-- The API (8000) and Postgres (5432) are not published.
+- The API (8000) is not published. Postgres is published on `127.0.0.1:5432` only, for DB tools.
 
 | Service | Image | Role |
 |---|---|---|
@@ -50,7 +50,8 @@ docker compose up --build -d --wait
 | `seed` | `sudoku-api:local` | Optional (profile `tools`): pre-fills the puzzle pool |
 
 - **Run exactly one api replica.** The puzzle-pool worker, the rate limiter (`memory://`) and the leaderboard cache are in-process. Don't use `--scale api=N`.
-- Compose reads `JWT_SECRET` (required), `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` (default `sudoku`) and `APP_URL` (default `http://localhost:8080`, used in email links) from `.env`. It also passes through the token TTL, rate-limit, pool, leaderboard and log settings. `DATABASE_URL`, `CORS_ORIGINS`, `FRONTEND_URL` and `SMTP_*` in `.env` are for the non-Docker setup and are ignored by compose.
+- Compose reads `JWT_SECRET` (required), `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` (default `sudoku`) and `APP_URL` (default `http://localhost:8080`, used in email links) from `.env`. `APP_URL` defaults to `http://localhost:${APP_PORT}`. It also passes through the token TTL, rate-limit, pool, leaderboard and log settings. `DATABASE_URL`, `CORS_ORIGINS`, `FRONTEND_URL` and `SMTP_*` in `.env` are for the non-Docker setup and are ignored by compose.
+- Host ports, image tags and the `edge` subnet are configurable, with these defaults: `APP_PORT=8080`, `MAILPIT_PORT=8025`, `POSTGRES_PORT=5432`, `API_IMAGE=sudoku-api:local`, `FRONTEND_IMAGE=sudoku-frontend:local`, `FRONTEND_DEV_IMAGE=sudoku-frontend:dev` (dev override) and `EDGE_SUBNET=10.89.28.0/24`, which is also the api's `FORWARDED_ALLOW_IPS`. To run a second, isolated instance next to your own (as `verify.sh --docker` does), override all of them and use another project name, for example `APP_PORT=18080 MAILPIT_PORT=18025 POSTGRES_PORT=15432 API_IMAGE=sudoku-api:verify FRONTEND_IMAGE=sudoku-frontend:verify EDGE_SUBNET=10.89.29.0/24 docker compose -p sudoku-verify up --build -d --wait`. Otherwise the build retags your images, or the ports and subnet collide.
 - All containers run with `no-new-privileges`, all capabilities dropped (Postgres keeps the few its entrypoint needs), a read-only root filesystem with a `tmpfs` for `/tmp`, memory/CPU limits and log rotation. Everything except Postgres runs as a non-root user.
 - Pre-fill the pool: `docker compose --profile tools run --rm seed` (defaults to 20 master and 20 extreme puzzles; set `SEED_LEVELS`, `SEED_COUNT`, `SEED_WORKERS` to change this).
 - Stop with `docker compose down`; add `-v` to delete the database.
@@ -91,14 +92,27 @@ uv run sudoku-api seed-pool expert.jsonl                  # pre-fill the puzzle 
 ## Checks
 
 ```bash
-./scripts/check.sh                 # ruff, ruff format, mypy and pytest for each Python package
-cd frontend && npm run lint && npm run typecheck && npm test && npm run build && npm run e2e
+./scripts/verify.sh                # lint, format, types, unit tests, build + API contract drift (all areas)
+./scripts/verify.sh --e2e          # + Playwright against the mocked API
+./scripts/verify.sh --full         # + Playwright against a real backend (ports 8765/5765, temp DB)
+./scripts/verify.sh --docker       # + build and smoke-test an isolated compose project (safe while your stack runs)
+./scripts/verify.sh --only backend --repeat 5
 ```
 
-Each Python package has its own `tests` package, so run pytest per package (the script does this); one workspace-wide pytest run will fail. The slow generator sweeps run with `cd generator && uv run pytest --run-slow`.
+Each Python package has its own `tests` package, so pytest runs per package; a single workspace-wide pytest run fails. The slow generator sweeps run with `cd generator && uv run pytest --run-slow`.
 
-CI runs the same checks: [.github/workflows/ci.yml](.github/workflows/ci.yml).
+CI runs the same checks ([ci.yml](.github/workflows/ci.yml)). A nightly job ([nightly.yml](.github/workflows/nightly.yml)) runs `verify.sh --full --repeat 5` to catch flaky tests.
 
 ## Development with Claude Code agents
 
-Each component has its own sub-agent in [.claude/agents/](.claude/agents/): `sudoku-validator`, `sudoku-generator`, `sudoku-api`, `sudoku-frontend` and `sudoku-docker`. Each agent owns one area: the first four own one folder each; `sudoku-docker` owns the Dockerfiles, `nginx.conf`, the compose files and the `docker/` scripts. Changes to an API contract go through PLAN.md.
+Agents are defined in [.claude/agents/](.claude/agents/):
+- one per area: `sudoku-validator`, `sudoku-generator`, `sudoku-api`, `sudoku-frontend`, `sudoku-docker`;
+- plus a read-only `sudoku-reviewer`.
+
+Where things are defined:
+- **Ownership:** [.claude/ownership.toml](.claude/ownership.toml), checked by `scripts/check_ownership.py`.
+- **Project rules and the agent report format:** [CLAUDE.md](CLAUDE.md).
+- **Per-area handoff notes:** `*/AGENTS.md`.
+- **Permission guardrails:** [.claude/settings.json](.claude/settings.json). They deny force-push, global installs and Read/Edit-tool access to `.env` (shell access can't be fully blocked, so CLAUDE.md also forbids it), and ask before commit, push and destructive commands.
+
+Verify everything with `./scripts/verify.sh`. Use `--e2e`, `--full` or `--docker` for the heavier suites, and `--repeat N` to hunt flaky tests.

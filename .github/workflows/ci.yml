@@ -29,6 +29,12 @@ jobs:
       - run: uv run ruff check ${{ matrix.package }}
       - run: uv run ruff format --check ${{ matrix.package }}
       - run: uv run mypy ${{ matrix.package }}/src
+      - name: backend/openapi.json matches the backend code
+        if: matrix.package == 'backend'
+        run: |
+          uv run python -c 'import sys; from sudoku_api.openapi_export import render_openapi; sys.stdout.write(render_openapi())' > /tmp/openapi.json
+          cmp -s /tmp/openapi.json backend/openapi.json || {
+            echo "::error::backend/openapi.json is stale. Run 'uv run python backend/scripts/export_openapi.py' and commit it."; exit 1; }
       - name: Tests
         working-directory: ${{ matrix.package }}
         run: uv run pytest -m "not slow" --cov --cov-report=term-missing
@@ -47,6 +53,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: Generated API types match backend/openapi.json
+        run: |
+          npm run gen:api
+          git diff --exit-code -- src/api/schema.gen.ts || {
+            echo "::error::src/api/schema.gen.ts is stale. Run 'npm run gen:api' in frontend/ and commit it."; exit 1; }
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck

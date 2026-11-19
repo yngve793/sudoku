@@ -78,7 +78,7 @@ In `docker-compose.yml`:
   (`memory://`) and the leaderboard cache are in-process. It uses `PUZZLE_SOURCE=generator` and
   `GENERATOR_PROCESSES=2`.
 - Its port is not published. nginx (`frontend`) proxies `/api/` to it, and it trusts
-  `X-Forwarded-*` only from that network (`10.89.28.0/24`, outside Docker's default address pools so auto-created networks cannot claim it).
+  `X-Forwarded-*` only from that network (`EDGE_SUBNET`, default `10.89.28.0/24`, outside Docker's default address pools so auto-created networks cannot claim it).
 - Pre-seed the pool with the `seed` one-shot (profile `tools`):
 
   ```bash

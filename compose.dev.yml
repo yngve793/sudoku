@@ -4,8 +4,8 @@
 #
 #   Vite dev server (HMR):  http://localhost:5173   (proxies /api to the api)
 #   API + docs:             http://localhost:8000/docs   (127.0.0.1 only)
-#   Postgres:               localhost:5432   (published by docker-compose.yml, 127.0.0.1 only)
-#   nginx build:            http://localhost:8080        (still available, built SPA)
+#   Postgres:               localhost:5432   (POSTGRES_PORT; published by docker-compose.yml, 127.0.0.1 only)
+#   nginx build:            http://localhost:8080        (APP_PORT; still available, built SPA)
 #
 # - The api runs `uvicorn --reload` against the bind-mounted validator/generator/backend
 #   sources (they shadow the copies installed in the image via PYTHONPATH). Dependency or
@@ -21,7 +21,7 @@ services:
       # Bind-mount file events are not reliable on every Docker host; poll instead.
       WATCHFILES_FORCE_POLLING: "true"
       FRONTEND_URL: http://localhost:5173
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      CORS_ORIGINS: http://localhost:5173,${APP_URL:-http://localhost:${APP_PORT:-8080}}
       LOG_JSON: "false"
     # Arguments are appended to the entrypoint's uvicorn command line.
     command:
@@ -37,7 +37,7 @@ services:
       - "127.0.0.1:8000:8000"
 
   frontend-dev:
-    image: sudoku-frontend:dev
+    image: ${FRONTEND_DEV_IMAGE:-sudoku-frontend:dev}
     build:
       context: frontend
       target: dev
