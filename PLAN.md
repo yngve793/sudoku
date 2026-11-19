@@ -334,8 +334,11 @@ Each agent is defined in `.claude/agents/` and **owns exactly one folder**. It m
 | `sudoku-generator` | `generator/` | validator public API |
 | `sudoku-api` | `backend/` | generator + validator public API |
 | `sudoku-frontend` | `frontend/` | API contract (OpenAPI) |
+| `sudoku-docker` | Dockerfiles, `frontend/nginx.conf`, compose files, `.dockerignore`, `docker/`, Docker CI job | everything (read-only) |
 
-The orchestrator (main session) owns the root files: workspace `pyproject.toml`, docker-compose, CI, README and this plan.
+Container files inside `backend/` and `frontend/` (`Dockerfile`, `docker-entrypoint.sh`, `nginx.conf`, the dockerignore files) belong to `sudoku-docker`, not to the folder's agent.
+
+The orchestrator (main session) owns the remaining root files: workspace `pyproject.toml`, CI (apart from the docker job), README and this plan.
 
 ## 7. Execution phases
 

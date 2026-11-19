@@ -19,7 +19,7 @@ uv run uvicorn sudoku_api.main:app --reload
 ```
 
 - With `EMAIL_BACKEND=smtp`, mail goes to `SMTP_HOST:SMTP_PORT`. In development, Mailpit
-  (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`) shows sent mail at
+  (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit:v1.34.0`) shows sent mail at
   http://localhost:8025.
 - With `EMAIL_BACKEND=console`, emails, including their verification and reset links, are
   written to the log. Never use this setting in production.
@@ -55,17 +55,40 @@ workspace packages:
 docker build -f backend/Dockerfile -t sudoku-api .
 ```
 
-- The build has two stages. The builder runs `uv sync --frozen --no-dev --package sudoku-api
-  --extra postgres --no-editable`. The runtime stage is `python:3.13-slim` and runs as the
-  non-root user `app` (uid 10001).
+- The build has two stages. The builder (`python:3.13-slim-trixie` + uv 0.13.9) runs
+  `uv sync --frozen --no-dev --package sudoku-api --extra postgres --no-editable`, with the
+  third-party dependencies in their own cached layer. The runtime stage contains only the
+  virtualenv and the Alembic files, and runs as the non-root user `app` (uid 10001). Size is
+  about 240 MB.
 - `backend/Dockerfile.dockerignore` is the allow-list for this build. BuildKit uses it
   automatically.
+- The image contains the `sudoku-api`, `sudoku-gen`, `alembic` and `uvicorn` commands.
 - The entrypoint (`docker-entrypoint.sh`) runs `alembic upgrade head` and then starts uvicorn
-  on `0.0.0.0:$PORT` with `--proxy-headers`.
+  on `0.0.0.0:$PORT` with `--proxy-headers`. Extra arguments are passed on to uvicorn.
   - Set `FORWARDED_ALLOW_IPS` to the reverse proxy's address or subnet. Otherwise every
     client shares the proxy's IP for rate limiting.
   - Set `RUN_MIGRATIONS=false` to skip the migration step.
 - The `HEALTHCHECK` polls `/api/v1/health`.
+
+In `docker-compose.yml`:
+
+- A one-shot `migrate` service runs the migrations, and the `api` service starts only after it
+  succeeds, with `RUN_MIGRATIONS=false`.
+- The api runs as a **single replica**, because the pool worker, the rate limiter
+  (`memory://`) and the leaderboard cache are in-process. It uses `PUZZLE_SOURCE=generator` and
+  `GENERATOR_PROCESSES=2`.
+- Its port is not published. nginx (`frontend`) proxies `/api/` to it, and it trusts
+  `X-Forwarded-*` only from that network (`10.89.28.0/24`, outside Docker's default address pools so auto-created networks cannot claim it).
+- Pre-seed the pool with the `seed` one-shot (profile `tools`):
+
+  ```bash
+  docker compose --profile tools run --rm seed                        # 20 master + 20 extreme
+  SEED_LEVELS="hard expert" SEED_COUNT=50 docker compose --profile tools run --rm seed
+  ```
+
+  It pipes `sudoku-gen ... --out /dev/stdout` into `sudoku-api seed-pool -`.
+- `compose.dev.yml` runs the api with `uvicorn --reload` on the bind-mounted sources and
+  publishes it on `127.0.0.1:8000`.
 
 To run the test suite against PostgreSQL instead of in-memory SQLite:
 
@@ -144,6 +167,7 @@ scripts/             export_openapi.py
 uv run sudoku-gen --difficulty extreme --count 200 --workers 4 --out extreme.jsonl
 uv run sudoku-api seed-pool extreme.jsonl          # uses DATABASE_URL (or --database-url)
 # in docker compose:  docker compose exec -T api sudoku-api seed-pool - < extreme.jsonl
+#                 or: docker compose --profile tools run --rm seed   (see "Docker" above)
 ```
 
 - Every row passes through the same validation gate.

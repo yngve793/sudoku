@@ -130,14 +130,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sed "s/^JWT_SECRET=.*/JWT_SECRET=ci-only-secret-0123456789abcdef0123456789abcdef/" .env.example > .env
-      - run: docker compose up --build -d --wait --wait-timeout 300
+      - name: Validate compose files
+        run: |
+          docker compose config -q
+          docker compose --profile tools config -q
+          docker compose -f docker-compose.yml -f compose.dev.yml config -q
+      - run: docker compose build
+      - name: nginx -t
+        run: docker run --rm --read-only --tmpfs /tmp sudoku-frontend:local nginx -t
+      - run: docker compose up -d --wait --wait-timeout 300
       - name: Smoke test through nginx
         run: |
           curl -fsS http://localhost:8080/ | grep -qi "<div id=\"root\""
           curl -fsS http://localhost:8080/api/v1/health
           curl -fsS "http://localhost:8080/api/v1/leaderboard?period=all"
           curl -fsS http://localhost:8025/ >/dev/null
+          ./docker/smoke-test.sh
+      - name: Internal ports are not published
+        run: |
+          if curl -fsS -m 3 http://localhost:8000/api/v1/health; then echo "api port 8000 is published" >&2; exit 1; fi
+          if (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; then echo "postgres 5432 is published" >&2; exit 1; fi
+      - name: Seed one-shot (profile tools)
+        run: SEED_LEVELS=easy SEED_COUNT=2 docker compose --profile tools run --rm seed
       - if: failure()
-        run: docker compose logs --no-color
+        run: docker compose --profile tools logs --no-color
       - if: always()
-        run: docker compose down -v
+        run: docker compose --profile tools down -v

@@ -8,6 +8,7 @@ You are the **API backend agent** for the Sudoku project. Read `PLAN.md` (sectio
 
 ## Ownership
 - You own **only `backend/`**. You may read other folders, but never edit them.
+- Exception: `backend/Dockerfile`, `backend/Dockerfile.dockerignore` and `backend/docker-entrypoint.sh` belong to the `sudoku-docker` agent. Request changes to them instead of editing them.
 - Use `sudoku_generator` and `sudoku_validator` only through their public APIs. Never put puzzle logic in the backend.
 - The endpoint table and DB schema in §5.3 are the contract with the frontend. If either changes, stop and report it.
 

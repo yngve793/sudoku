@@ -1,0 +1,80 @@
+# Hot-reload development override.
+#
+#   docker compose -f docker-compose.yml -f compose.dev.yml up --build
+#
+#   Vite dev server (HMR):  http://localhost:5173   (proxies /api to the api)
+#   API + docs:             http://localhost:8000/docs   (127.0.0.1 only)
+#   Postgres:               localhost:5432               (127.0.0.1 only)
+#   nginx build:            http://localhost:8080        (still available, built SPA)
+#
+# - The api runs `uvicorn --reload` against the bind-mounted validator/generator/backend
+#   sources (they shadow the copies installed in the image via PYTHONPATH). Dependency or
+#   migration changes still need `--build` (and a rerun of `migrate`).
+# - The Vite container sits on the `edge` network next to the api and proxies /api to
+#   http://api:8000 (VITE_API_PROXY_TARGET, read by frontend/vite.config.ts).
+name: sudoku
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [backend, devhost]
+
+  api:
+    environment:
+      PYTHONPATH: /src/backend/src:/src/generator/src:/src/validator/src
+      # Bind-mount file events are not reliable on every Docker host; poll instead.
+      WATCHFILES_FORCE_POLLING: "true"
+      FRONTEND_URL: http://localhost:5173
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      LOG_JSON: "false"
+    # Arguments are appended to the entrypoint's uvicorn command line.
+    command:
+      - --reload
+      - --reload-dir=/src/backend/src
+      - --reload-dir=/src/generator/src
+      - --reload-dir=/src/validator/src
+    volumes:
+      - ./backend/src:/src/backend/src:ro
+      - ./generator/src:/src/generator/src:ro
+      - ./validator/src:/src/validator/src:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend-dev:
+    image: sudoku-frontend:dev
+    build:
+      context: frontend
+      target: dev
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    ports:
+      - "127.0.0.1:5173:5173"
+    # `edge` is where the api is reachable as `api:8000` (and is not internal, so the
+    # port can be published).
+    networks: [edge]
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./frontend:/app
+      # Keep the image's Linux node_modules; never mix in the host's. After a
+      # package-lock change: `... build frontend-dev && ... up -V frontend-dev`.
+      - /app/node_modules
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    restart: unless-stopped
+
+networks:
+  # Non-internal network so dev ports on postgres/api can be published to the host.
+  devhost:

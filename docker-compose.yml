@@ -1,64 +1,195 @@
 # Local production-like stack.
-#   cp .env.example .env   # then set JWT_SECRET
-#   docker compose up --build
-# App:      http://localhost:8080
-# Mailpit:  http://localhost:8025  (catches all outgoing email, e.g. verification links)
+#
+#   cp .env.example .env            # then set JWT_SECRET (>= 32 chars)
+#   docker compose up --build -d --wait
+#
+#   App:      http://localhost:8080  (SPA + same-origin /api/ proxy; the only entry point)
+#   Mailpit:  http://localhost:8025  (catches all outgoing email, e.g. verification links)
+#
+# Optional one-shot to pre-fill the puzzle pool (see backend/README.md):
+#   docker compose --profile tools run --rm seed
+#
+# Hot-reload development: docker compose -f docker-compose.yml -f compose.dev.yml up --build
+#
+# Variables read from .env (all optional except JWT_SECRET):
+#   JWT_SECRET                      required, >= 32 chars
+#   POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB   default sudoku/sudoku/sudoku
+#                                   (the password is embedded in DATABASE_URL: avoid @ : / ? #)
+#   APP_URL                         public URL of the app, used in email links (default
+#                                   http://localhost:8080). DATABASE_URL, CORS_ORIGINS,
+#                                   FRONTEND_URL, SMTP_HOST/PORT from .env are deliberately
+#                                   NOT used here: they describe the non-Docker local setup.
+#   Tunables passed through with the app defaults: token TTLs, COOKIE_SECURE, rate limits,
+#   POOL_*, GENERATION_TIMEOUT_SECONDS, LEADERBOARD_CACHE_SECONDS, LOG_LEVEL, EMAIL_FROM.
+#
+# The api MUST run as a single replica (do not `--scale api=N`): the puzzle-pool worker,
+# the rate limiter (memory://) and the leaderboard cache all live in-process. Migrations run
+# once in the `migrate` one-shot, never in the api container.
 name: sudoku
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  logging: *logging
+
+x-db-url: &db-url postgresql+psycopg://${POSTGRES_USER:-sudoku}:${POSTGRES_PASSWORD:-sudoku}@postgres:5432/${POSTGRES_DB:-sudoku}
+
+x-api-image: &api-image
+  image: sudoku-api:local
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
 
 services:
   postgres:
-    image: postgres:18-alpine
+    <<: *hardening
+    image: postgres:18.7-alpine
     environment:
-      POSTGRES_USER: sudoku
-      POSTGRES_PASSWORD: sudoku
-      POSTGRES_DB: sudoku
+      POSTGRES_USER: ${POSTGRES_USER:-sudoku}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sudoku}
+      POSTGRES_DB: ${POSTGRES_DB:-sudoku}
     volumes:
+      # Postgres 18 images keep PGDATA in a versioned subdirectory of /var/lib/postgresql.
       - pgdata:/var/lib/postgresql
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql:uid=70,gid=70
+      - /tmp
+    cap_drop: [ALL]
+    # The entrypoint starts as root, fixes ownership and drops to `postgres` (su-exec).
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+    shm_size: 128m
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sudoku -d sudoku"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -h 127.0.0.1"]
       interval: 5s
       timeout: 3s
       retries: 20
-    networks: [internal]
+      start_period: 10s
+    networks: [backend]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 512M}
+    pids_limit: 200
     restart: unless-stopped
 
   mailpit:
-    image: axllent/mailpit:latest
+    <<: *hardening
+    image: axllent/mailpit:v1.34.0
+    user: "65534:65534"   # the image defaults to root; Mailpit needs no privileges
+    environment:
+      MP_MAX_MESSAGES: "500"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
     ports:
-      - "8025:8025"   # web UI / API (SMTP 1025 stays internal)
-    networks: [internal]
+      # Web UI + API, localhost only (it shows every email, incl. reset links).
+      # SMTP (1025) stays on the internal network.
+      - "127.0.0.1:8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks: [backend, mail]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 128M}
+    pids_limit: 100
     restart: unless-stopped
 
-  api:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+  # One-shot: apply migrations, then exit. The api waits for it, so migrations never race.
+  migrate:
+    <<: [*hardening, *api-image]
+    entrypoint: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *db-url
     depends_on:
       postgres:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    healthcheck:
+      disable: true
+    networks: [backend]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 256M}
+    restart: "no"
+
+  api:
+    <<: [*hardening, *api-image]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       mailpit:
-        condition: service_started
+        condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg://sudoku:sudoku@postgres:5432/sudoku
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
-      CORS_ORIGINS: http://localhost:8080
-      FRONTEND_URL: http://localhost:8080
-      COOKIE_SECURE: "false"
+      RUN_MIGRATIONS: "false"
+      DATABASE_URL: *db-url
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (>= 32 chars) in .env}
+      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-15}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
+      VERIFY_EMAIL_TTL_HOURS: ${VERIFY_EMAIL_TTL_HOURS:-24}
+      RESET_PASSWORD_TTL_MINUTES: ${RESET_PASSWORD_TTL_MINUTES:-60}
+      # The SPA and the API share one origin through nginx (the refresh cookie is
+      # SameSite=strict, Path=/api/v1/auth), so CORS only needs that origin.
+      FRONTEND_URL: ${APP_URL:-http://localhost:8080}
+      CORS_ORIGINS: ${APP_URL:-http://localhost:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}   # plain-HTTP localhost; set true behind TLS
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-strict}
       EMAIL_BACKEND: smtp
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_STARTTLS: "false"
-      EMAIL_FROM: Sudoku <no-reply@sudoku.local>
-      # Port 8000 is NOT published; only the frontend proxy (same network) can reach it,
-      # so trusting X-Forwarded-For from the internal subnet is safe.
-      FORWARDED_ALLOW_IPS: 172.28.0.0/16
-      PUZZLE_SOURCE: ${PUZZLE_SOURCE:-generator}
+      EMAIL_FROM: ${EMAIL_FROM:-Sudoku <no-reply@sudoku.local>}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_STORAGE_URI: ${RATE_LIMIT_STORAGE_URI:-memory://}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-20/minute}
+      REFRESH_RATE_LIMIT: ${REFRESH_RATE_LIMIT:-60/minute}
+      EMAIL_RATE_LIMIT: ${EMAIL_RATE_LIMIT:-3/hour}
+      HINT_RATE_LIMIT: ${HINT_RATE_LIMIT:-30/minute}
+      PUZZLE_SOURCE: generator
+      GENERATOR_PROCESSES: "2"
+      GENERATION_TIMEOUT_SECONDS: ${GENERATION_TIMEOUT_SECONDS:-5}
+      POOL_WORKER_ENABLED: "true"
       POOL_TARGET_PER_LEVEL: ${POOL_TARGET_PER_LEVEL:-20}
+      POOL_REFILL_INTERVAL_SECONDS: ${POOL_REFILL_INTERVAL_SECONDS:-30}
+      POOL_GENERATION_TIMEOUT_SECONDS: ${POOL_GENERATION_TIMEOUT_SECONDS:-120}
+      LEADERBOARD_CACHE_SECONDS: ${LEADERBOARD_CACHE_SECONDS:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_JSON: "true"
-    networks: [internal]
+      # Port 8000 is NOT published: only containers on the `edge` network (i.e. nginx)
+      # reach the api, so trusting X-Forwarded-* from that subnet is safe.
+      FORWARDED_ALLOW_IPS: 10.89.28.0/24
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    init: true          # reaps the generator worker processes
+    networks: [backend, edge]
+    # Single replica by design (in-process pool worker, rate limiter, leaderboard cache).
+    deploy:
+      replicas: 1
+      resources:
+        limits: {cpus: "2.0", memory: 1G}
+    pids_limit: 200
     restart: unless-stopped
 
   frontend:
+    <<: *hardening
+    image: sudoku-frontend:local
     build:
       context: frontend
     depends_on:
@@ -66,14 +197,66 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
-    networks: [internal]
+    read_only: true
+    tmpfs:
+      - /tmp       # nginx-unprivileged keeps its pid file and temp paths here
+    cap_drop: [ALL]
+    networks: [edge]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 128M}
+    pids_limit: 100
     restart: unless-stopped
 
+  # Optional one-shot (profile `tools`): pre-fill the puzzle pool for the slow levels.
+  #   docker compose --profile tools run --rm seed
+  #   SEED_LEVELS="hard expert" SEED_COUNT=50 docker compose --profile tools run --rm seed
+  seed:
+    <<: [*hardening, *api-image]
+    profiles: [tools]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        for level in $${SEED_LEVELS}; do
+          echo "seeding $${SEED_COUNT} x $${level}" >&2
+          sudoku-gen --difficulty "$${level}" --count "$${SEED_COUNT}" \
+            --workers "$${SEED_WORKERS}" --stats --out /dev/stdout \
+            | sudoku-api seed-pool -
+        done
+    environment:
+      DATABASE_URL: *db-url
+      SEED_LEVELS: ${SEED_LEVELS:-master extreme}
+      SEED_COUNT: ${SEED_COUNT:-20}
+      SEED_WORKERS: ${SEED_WORKERS:-2}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    healthcheck:
+      disable: true
+    networks: [backend]
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 1G}
+    restart: "no"
+
 networks:
-  internal:
+  # Postgres, migrations, the api and Mailpit's SMTP side. No outside access at all.
+  backend:
+    internal: true
+  # nginx <-> api (and Vite in dev). Fixed subnet so the api can trust X-Forwarded-For
+  # from it. Deliberately outside Docker's default auto-allocation pools (172.17-31.x,
+  # 192.168.x): an auto-created network could otherwise take it first ("Pool overlaps").
+  edge:
     ipam:
       config:
-        - subnet: 172.28.0.0/16
+        - subnet: 10.89.28.0/24
+  # Only for publishing Mailpit's web UI.
+  mail:
 
 volumes:
   pgdata:

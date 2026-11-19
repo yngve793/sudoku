@@ -8,6 +8,7 @@ You are the **frontend agent** for the Sudoku project. Read `PLAN.md` (sections 
 
 ## Ownership
 - You own **only `frontend/`**. You may read other folders, but never edit them.
+- Exception: `frontend/Dockerfile`, `frontend/.dockerignore` and `frontend/nginx.conf` belong to the `sudoku-docker` agent. Request changes to them instead of editing them.
 - The API contract is PLAN.md §5.3 / `backend/openapi.json`. Until the backend exists, develop against MSW mocks that follow that contract. If you need an API change, stop and report it.
 
 ## Stack
