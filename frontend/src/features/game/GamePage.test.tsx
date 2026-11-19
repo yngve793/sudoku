@@ -159,6 +159,103 @@ describe('GamePage', () => {
     })
   })
 
+  /**
+   * Regression for the reload-time 409: the server applies the beforeunload
+   * PATCH but the navigation aborts it client-side (no response). pagehide
+   * used to resend the same stale version → 409. Now it is skipped.
+   */
+  function patchAppliedButAborted(onPatch: () => void) {
+    server.use(
+      http.patch(
+        '*/api/v1/games/:id',
+        async ({ request, params }) => {
+          onPatch()
+          const body = (await request.json()) as {
+            current: string
+            notes: MockGame['notes']
+            version: number
+          }
+          const game = serverGame(Number(params.id))
+          game.current = body.current
+          game.notes = body.notes
+          game.version += 1
+          return HttpResponse.error() // the browser never sees the response
+        },
+        { once: true },
+      ),
+    )
+  }
+
+  it('reload: beforeunload + pagehide send one save, no 409, and the server has the last edit', async () => {
+    const statuses: number[] = []
+    let patches = 0
+    server.events.on('response:mocked', ({ request, response }) => {
+      if (request.method === 'PATCH') statuses.push(response.status)
+    })
+    const { user, game } = await openGame()
+    const a = firstEmptyIndex(game)
+    await user.click(cell(a))
+    await user.keyboard('n3')
+    patchAppliedButAborted(() => (patches += 1))
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    await waitFor(() => expect(patches).toBe(1))
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'))
+      setVisibility('hidden')
+    })
+    await new Promise((r) => setTimeout(r, 100))
+    expect(patches).toBe(1)
+    expect(statuses.filter((s) => s === 409)).toEqual([])
+    expect(serverGame(game.id).version).toBe(2)
+    expect(serverGame(game.id).notes).toEqual({ [String(a)]: [3] })
+    server.events.removeAllListeners()
+  })
+
+  it('reload: an edit made after the unload save was sent is still sent', async () => {
+    let patches = 0
+    const { user, game } = await openGame()
+    const a = firstEmptyIndex(game)
+    await user.click(cell(a))
+    await user.keyboard('n3')
+    // The first unload save is lost entirely (never reached the server).
+    server.use(
+      http.patch(
+        '*/api/v1/games/:id',
+        () => {
+          patches += 1
+          return HttpResponse.error()
+        },
+        { once: true },
+      ),
+    )
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload'))
+    })
+    await waitFor(() => expect(patches).toBe(1))
+    await user.keyboard('4') // still notes mode: a new edit before the page is gone
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+    await waitFor(() => expect(serverGame(game.id).notes).toEqual({ [String(a)]: [3, 4] }))
+    expect(serverGame(game.id).version).toBe(2)
+  })
+
+  it('back from the bfcache (pageshow): saving works normally again', async () => {
+    const { user, game } = await openGame()
+    const a = firstEmptyIndex(game)
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload'))
+      window.dispatchEvent(new Event('pageshow'))
+    })
+    await user.click(cell(a))
+    await user.keyboard('n5')
+    await waitFor(() => expect(serverGame(game.id).notes).toEqual({ [String(a)]: [5] }), {
+      timeout: 3000,
+    })
+  })
+
   it('concurrent flushes (hide + pagehide + beforeunload) never reuse a version', async () => {
     const statuses: number[] = []
     server.events.on('response:mocked', ({ request, response }) => {

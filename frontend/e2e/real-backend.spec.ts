@@ -104,7 +104,8 @@ test('register -> verify -> play -> hint -> check against the real API', async (
   const before = await notedCell.getAttribute('aria-label')
   await expect(page.getByText('Saved')).toBeVisible({ timeout: 5000 })
   await page.reload()
-  await expect(notedCell).toHaveAttribute('aria-label', before!)
+  // "incorrect" marks from Check are session-only; everything else must survive.
+  await expect(notedCell).toHaveAttribute('aria-label', before!.replace(/, incorrect$/, ''))
 
   await page.getByRole('link', { name: 'Leaderboard' }).click()
   await expect(page.getByRole('table').or(page.getByText(/No scores yet/))).toBeVisible()
