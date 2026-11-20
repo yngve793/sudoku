@@ -4,7 +4,7 @@ import { isApiError } from '../../api/client'
 import { gamesApi } from '../../api/endpoints'
 import type { Game, Hint, HintStage, ScoreBreakdown } from '../../api/types'
 import { Alert } from '../../components/Alert'
-import { DIFFICULTY_INFO } from '../../lib/difficulties'
+import { GameBadges } from '../../components/GameBadges'
 import { errorMessage } from '../../lib/errors'
 import { describeDuration, formatDuration } from '../../lib/format'
 import { SearchPanel } from '../search/SearchPanel'
@@ -568,14 +568,12 @@ export function GameSession({ game, conflictNotice, onConflict }: GameSessionPro
     exitSearch,
   ])
 
-  const info = DIFFICULTY_INFO[game.difficulty]
-
   return (
     <div className="game">
       <div className="game__bar">
         <div className="game__title">
           <h1 className="game__heading">
-            <span className={`badge badge--level badge--${game.difficulty}`}>{info.label}</span>
+            <GameBadges difficulty={game.difficulty} source={game.source} />
             <span className="visually-hidden"> Sudoku</span>
           </h1>
         </div>
@@ -788,13 +786,14 @@ export function GameSession({ game, conflictNotice, onConflict }: GameSessionPro
       {showResult && result && (
         <CompletionDialog
           difficulty={game.difficulty}
+          source={game.source}
           score={result.score}
           elapsedSeconds={result.elapsed}
           hintsUsed={hintsUsed}
           mistakes={mistakes}
           breakdown={result.breakdown}
           starting={startGame.isPending}
-          onPlayAgain={() => startGame.mutate(game.difficulty)}
+          onPlayAgain={(difficulty) => startGame.mutate(difficulty)}
           onClose={() => setShowResult(false)}
         />
       )}

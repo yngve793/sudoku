@@ -65,3 +65,12 @@ def test_search_penalty_floored_at_zero() -> None:
     s = compute_score(Difficulty.beginner, 0, [], 0, auto_placements=81 * 10)
     assert s.search_penalty == 1620
     assert s.total == 0
+
+
+def test_unrated_imports_score_like_expert_with_45_minute_par() -> None:
+    from sudoku_api.services.scoring import UNRATED_PAR_SECONDS
+
+    unrated = compute_score(None, 100, [], 0)
+    assert unrated.base == BASE_POINTS[Difficulty.expert]
+    assert unrated.par_seconds == UNRATED_PAR_SECONDS == 45 * 60
+    assert unrated.total == round(BASE_POINTS[Difficulty.expert] * 1.5)

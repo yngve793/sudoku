@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from sudoku_api.domain import Difficulty, GameStatus, LeaderboardPeriod
+from sudoku_api.domain import Difficulty, GameSource, GameStatus, LeaderboardPeriod
 
 
 class ScoreHistoryItem(BaseModel):
     game_id: int
-    difficulty: Difficulty
+    difficulty: Difficulty | None = Field(description="null only for Unrated imported puzzles")
+    source: GameSource
     status: GameStatus
     score: int | None
     elapsed_seconds: int

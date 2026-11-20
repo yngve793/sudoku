@@ -4,6 +4,10 @@ Generation is CPU-bound pure Python. In a thread it would hold the GIL and slow 
 handling, so with `GENERATOR_PROCESSES > 0` generator jobs run in a small `spawn`-context
 process pool. Sources that cannot run in another process (fixtures) and
 `GENERATOR_PROCESSES = 0` (tests) use a worker thread instead.
+
+`run_job` reuses the same pool for other CPU-bound request work (photo recognition, rating
+imported puzzles). The background refill runs one job at a time, so with the default two
+processes one worker stays free for requests.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from collections.abc import Callable
 from concurrent.futures import Executor, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from functools import partial
+from typing import ParamSpec, TypeVar
 
 from sudoku_api.domain import Difficulty
 from sudoku_api.services.puzzle_source import (
@@ -26,6 +31,18 @@ from sudoku_api.services.puzzle_source import (
 )
 
 logger = logging.getLogger(__name__)
+
+P = ParamSpec("P")
+T = TypeVar("T")
+
+
+class JobError(Exception):
+    """A pooled job did not finish: it timed out (`JobTimeoutError`) or its worker died."""
+
+
+class JobTimeoutError(JobError):
+    pass
+
 
 # The generator checks its own timeout between attempts, so it can overrun by one attempt.
 TIMEOUT_GRACE_SECONDS = 2.0
@@ -79,6 +96,29 @@ class PuzzleGenerator:
             logger.exception("generator process pool broke; it will be recreated")
             self._discard_executor()
             raise PuzzleGenerationError("generator worker crashed") from None
+
+    async def run_job(
+        self, timeout: float, fn: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ) -> T:
+        """Run a picklable top-level `fn` in the process pool (a thread when processes=0).
+
+        Raises `JobTimeoutError` after `timeout` seconds and `JobError` if the worker crashed
+        (the pool is then recreated). Exceptions raised by `fn` propagate unchanged, so jobs
+        should return their failures as values when the exception may not pickle.
+        The worker keeps running after a timeout; it cannot be interrupted.
+        """
+        executor = self._process_executor() if self._processes > 0 else None
+        future = asyncio.get_running_loop().run_in_executor(executor, partial(fn, *args, **kwargs))
+        try:
+            return await asyncio.wait_for(future, timeout)
+        except TimeoutError:
+            raise JobTimeoutError(
+                f"{getattr(fn, '__name__', 'job')} took over {timeout} s"
+            ) from None
+        except BrokenProcessPool:
+            logger.exception("worker process pool broke; it will be recreated")
+            self._discard_executor()
+            raise JobError("worker crashed") from None
 
     def shutdown(self) -> None:
         self._discard_executor()

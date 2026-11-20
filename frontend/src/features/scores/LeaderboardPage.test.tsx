@@ -63,4 +63,20 @@ describe('LeaderboardPage', () => {
     renderApp('/leaderboard?difficulty=easy&period=day')
     expect(await screen.findByText(/No scores yet for Easy/)).toBeInTheDocument()
   })
+
+  it('explains that imported games are not ranked, and never lists them', async () => {
+    await loginAsDemo()
+    const imported = seedGame({
+      source: 'imported',
+      difficulty: 'easy',
+      status: 'completed',
+      score: 999_999,
+      completed_at: new Date().toISOString(),
+    })
+    renderApp('/leaderboard?difficulty=easy&period=all')
+    expect(await screen.findByText(/imported from a photo aren't ranked/)).toBeInTheDocument()
+    const table = await screen.findByRole('table')
+    expect(within(table).queryByText('999,999')).not.toBeInTheDocument()
+    expect(imported.source).toBe('imported')
+  })
 })

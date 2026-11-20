@@ -1,12 +1,14 @@
 import { useRef } from 'react'
 import { Link } from 'react-router'
-import type { Difficulty, ScoreBreakdown } from '../../api/types'
+import type { Difficulty, GameSource, ScoreBreakdown } from '../../api/types'
 import { Modal } from '../../components/Modal'
-import { DIFFICULTY_INFO } from '../../lib/difficulties'
+import { DIFFICULTY_INFO, difficultyLabel } from '../../lib/difficulties'
 import { formatDuration, formatNumber } from '../../lib/format'
 
 interface CompletionDialogProps {
-  difficulty: Difficulty
+  /** `null` for an unrated imported puzzle. */
+  difficulty: Difficulty | null
+  source: GameSource
   score: number
   elapsedSeconds: number
   hintsUsed: number
@@ -14,16 +16,21 @@ interface CompletionDialogProps {
   /** Server-computed breakdown; absent when reopening an already-completed game. */
   breakdown: ScoreBreakdown | null
   starting: boolean
-  onPlayAgain: () => void
+  onPlayAgain: (difficulty: Difficulty) => void
   onClose: () => void
 }
 
 export function CompletionDialog(props: CompletionDialogProps) {
   const primary = useRef<HTMLButtonElement>(null)
+  const { difficulty } = props
+  const imported = props.source === 'imported'
   return (
     <Modal title="Puzzle solved!" onClose={props.onClose} initialFocusRef={primary}>
       <div className="completion">
-        <p className="completion__difficulty">{DIFFICULTY_INFO[props.difficulty].label}</p>
+        <p className="completion__difficulty">
+          {difficultyLabel(difficulty)}
+          {imported && ' · Imported'}
+        </p>
         <p className="completion__score">
           <span className="completion__score-value">{formatNumber(props.score)}</span>
           <span className="completion__score-label">points</span>
@@ -43,22 +50,40 @@ export function CompletionDialog(props: CompletionDialogProps) {
           </div>
         </dl>
         {props.breakdown && <Breakdown breakdown={props.breakdown} />}
+        {imported && (
+          <p className="completion__note">
+            Imported games count towards your stats but are not ranked.
+          </p>
+        )}
         <div className="completion__actions">
-          <button
-            ref={primary}
-            type="button"
-            className="button button--primary"
-            onClick={props.onPlayAgain}
-            disabled={props.starting}
-          >
-            {props.starting ? 'Starting…' : `New ${DIFFICULTY_INFO[props.difficulty].label} game`}
-          </button>
-          <Link
-            className="button button--secondary"
-            to={`/leaderboard?difficulty=${props.difficulty}`}
-          >
-            View leaderboard
-          </Link>
+          {difficulty && !imported ? (
+            <>
+              <button
+                ref={primary}
+                type="button"
+                className="button button--primary"
+                onClick={() => props.onPlayAgain(difficulty)}
+                disabled={props.starting}
+              >
+                {props.starting ? 'Starting…' : `New ${DIFFICULTY_INFO[difficulty].label} game`}
+              </button>
+              <Link
+                className="button button--secondary"
+                to={`/leaderboard?difficulty=${difficulty}`}
+              >
+                View leaderboard
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link className="button button--primary" to="/import">
+                Import another photo
+              </Link>
+              <Link className="button button--secondary" to="/">
+                New game
+              </Link>
+            </>
+          )}
           <button type="button" className="button button--ghost" onClick={props.onClose}>
             Close
           </button>

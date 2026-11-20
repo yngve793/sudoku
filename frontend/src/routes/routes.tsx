@@ -7,6 +7,9 @@ import { ResetPasswordPage } from '../features/auth/ResetPasswordPage'
 import { VerifyEmailPage } from '../features/auth/VerifyEmailPage'
 import { GamePage } from '../features/game/GamePage'
 import { HomePage } from '../features/home/HomePage'
+import { ImportFlow } from '../features/import/ImportFlow'
+import { ImportReviewPage } from '../features/import/ImportReviewPage'
+import { ImportUploadPage } from '../features/import/ImportUploadPage'
 import { LeaderboardPage } from '../features/scores/LeaderboardPage'
 import { TreePage } from '../features/search/TreePage'
 import { Layout } from './Layout'
@@ -41,6 +44,19 @@ export const routes: RouteObject[] = [
             <TreePage />
           </RequireAuth>
         ),
+      },
+      {
+        // Photo import (PLAN.md §5.6); the photo lives only in ImportFlow's state.
+        path: 'import',
+        element: (
+          <RequireAuth>
+            <ImportFlow />
+          </RequireAuth>
+        ),
+        children: [
+          { index: true, element: <ImportUploadPage /> },
+          { path: 'review', element: <ImportReviewPage /> },
+        ],
       },
       { path: '*', element: <NotFoundPage /> },
     ],

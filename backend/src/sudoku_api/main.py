@@ -20,7 +20,7 @@ from sudoku_api.db import make_engine, make_session_factory
 from sudoku_api.errors import install_error_handlers
 from sudoku_api.logging_config import configure_logging
 from sudoku_api.ratelimit import RateLimiter
-from sudoku_api.routers import auth, games, health, me, scores
+from sudoku_api.routers import auth, games, health, imports, me, scores
 from sudoku_api.routers.scores import TTLCache
 from sudoku_api.services.email import EmailSender, make_email_sender
 from sudoku_api.services.generation import PuzzleGenerator
@@ -95,7 +95,16 @@ def create_app(
         allow_headers=["Authorization", "Content-Type"],
         max_age=600,
     )
-    for router in (auth.router, me.router, games.router, scores.router, health.router):
+    routers = (
+        auth.router,
+        me.router,
+        games.router,
+        imports.upload_router,
+        imports.router,
+        scores.router,
+        health.router,
+    )
+    for router in routers:
         app.include_router(router, prefix=API_PREFIX)
     return app
 

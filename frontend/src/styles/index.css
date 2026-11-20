@@ -2536,3 +2536,585 @@ kbd {
 .tree-page__empty {
   color: var(--text-muted);
 }
+
+/* ==========================================================================
+   Photo import (PLAN.md §5.6)
+   ========================================================================== */
+.badge--unrated {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
+.badge--imported {
+  color: var(--text);
+  background: var(--surface-2);
+  border-style: dotted;
+}
+
+.badge--imported::before {
+  content: '⎙';
+  font-weight: 400;
+}
+
+.game__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.page__note,
+.completion__note {
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+/* Home: entry point and recent games */
+.import-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+}
+
+.import-entry__title {
+  font-size: 1rem;
+}
+
+.import-entry__text {
+  margin-top: 0.2rem;
+  max-width: 46ch;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.history-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.88rem;
+}
+
+.history-list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.history-list__badges {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.history-list__meta {
+  color: var(--text-muted);
+}
+
+/* Upload */
+.import-page {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.dropzone {
+  display: grid;
+  justify-items: center;
+  gap: 0.6rem;
+  padding: 2.25rem 1rem;
+  text-align: center;
+  background: var(--surface);
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  transition:
+    background 120ms,
+    border-color 120ms;
+}
+
+.dropzone--active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  border-style: solid;
+}
+
+.dropzone__title {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.dropzone__hint {
+  color: var(--text-muted);
+}
+
+.dropzone__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.upload-progress {
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  width: min(100%, 360px);
+}
+
+.upload-progress .progress {
+  width: 100%;
+  margin-top: 0;
+}
+
+.upload-progress__text {
+  font-weight: 600;
+}
+
+.progress--indeterminate .progress__bar {
+  width: 35% !important;
+  animation: indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress--indeterminate .progress__bar {
+    width: 100% !important;
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+.import-tips ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.2rem;
+  color: var(--text-muted);
+}
+
+.import-tips__privacy {
+  padding: 0.75rem 0.9rem;
+  font-size: 0.88rem;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+/* Review */
+.import-review__layout {
+  display: grid;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .import-review__layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 480px);
+  }
+}
+
+.import-review__photo,
+.import-review__grid {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.import-review__grid-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.import-review__grid-head .section-title {
+  margin: 0;
+}
+
+.segmented--small .segmented__option span {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.84rem;
+}
+
+.import-review__photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.import-review__note,
+.import-review__counts {
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+.import-review__note {
+  flex-basis: 100%;
+}
+
+.import-review__keys {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .import-review__keys {
+    display: block;
+  }
+}
+
+.import-review__start {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.photo-editor {
+  margin: 0;
+}
+
+/* Width and aspect-ratio come inline from photoFrameStyle(): the 75vh height cap
+   is a width cap, so tall photos are never squashed (no max-height here). */
+.photo-editor__frame {
+  position: relative;
+  width: 100%;
+  margin-inline: auto;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  touch-action: none;
+}
+
+.photo-editor__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  border-radius: var(--radius);
+  user-select: none;
+  pointer-events: none;
+}
+
+.photo-editor__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.photo-editor__outline {
+  fill: rgb(52 70 212 / 10%);
+  stroke: #3446d4;
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.photo-editor__outline--bad {
+  stroke: #b3261e;
+  stroke-dasharray: 8 6;
+}
+
+.photo-editor__gridline {
+  stroke: #3446d4;
+  stroke-width: 1;
+  stroke-opacity: 0.55;
+}
+
+.photo-editor__caption {
+  margin-top: 0.5rem;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+/* Big touch target, small visual dot, white ring for contrast on any photo. */
+.corner-handle {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.corner-handle::before {
+  content: '';
+  width: 18px;
+  height: 18px;
+  background: #3446d4;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
+}
+
+.corner-handle:active {
+  cursor: grabbing;
+}
+
+.corner-handle:focus-visible {
+  outline: none;
+}
+
+.corner-handle:focus-visible::before {
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 6px #3446d4;
+}
+
+.corner-handle:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.corner-handle__label {
+  position: absolute;
+  top: -4px;
+  left: 30px;
+  padding: 0 4px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: #fff;
+  background: rgb(23 27 38 / 80%);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.corner-handle--top-right .corner-handle__label,
+.corner-handle--bottom-right .corner-handle__label {
+  left: auto;
+  right: 30px;
+}
+
+/* Validation status: icon + text, never colour alone */
+.check-status {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.check-status__list {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  transition: opacity 120ms;
+}
+
+.check-status__list--stale {
+  opacity: 0.6;
+}
+
+.check-status__line > span[aria-hidden='true'] {
+  display: inline-block;
+  width: 1.1em;
+  font-weight: 800;
+}
+
+.check-status__line--ok > span[aria-hidden='true'] {
+  color: var(--success);
+}
+
+.check-status__line--bad > span[aria-hidden='true'],
+.check-status__line--bad {
+  color: var(--danger);
+}
+
+.check-status__line--warn {
+  color: var(--warning);
+}
+
+.check-status__aside,
+.check-status__checking {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+/* Review grid: printed vs. handwritten differ in weight, style, font and a pencil mark */
+.cell--handwritten .cell__value {
+  font-family: 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.cell__kind {
+  position: absolute;
+  bottom: 1px;
+  left: 3px;
+  font-size: 2.3cqi;
+  line-height: 1;
+  color: var(--user);
+}
+
+.cell--uncertain,
+.cell--autocorrected {
+  background: var(--warning-soft);
+  box-shadow: inset 0 0 0 2px var(--warning);
+}
+
+.cell--autocorrected {
+  box-shadow: inset 0 0 0 2px var(--warning);
+  outline: 2px dotted var(--warning);
+  outline-offset: -6px;
+}
+
+.cell__review {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-size: 2.3cqi;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--warning);
+}
+
+.review-grid .cell--selected {
+  background: var(--cell-selected);
+}
+
+.review-grid--givens {
+  border-style: dashed;
+}
+
+.cell-inspector {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.cell-inspector--empty {
+  color: var(--text-muted);
+}
+
+.cell-inspector__title {
+  font-size: 1rem;
+}
+
+.cell-inspector__now {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.cell-inspector__alts,
+.cell-inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.alt-button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-height: 44px;
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.alt-button:hover {
+  border-color: var(--accent);
+}
+
+.alt-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.alt-button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border: 2px solid var(--accent);
+}
+
+.alt-button[aria-pressed='true']::before {
+  content: '✓';
+  font-weight: 800;
+}
+
+.alt-button__digit {
+  font-family: var(--font-num);
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.alt-button__p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.review-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.review-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.review-legend__given {
+  font-weight: 800;
+  color: var(--given);
+}
+
+.review-legend__hand {
+  font-family: 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive;
+  font-style: italic;
+  color: var(--user);
+}
+
+.review-legend__mark {
+  font-weight: 800;
+  color: var(--warning);
+}
+
+.review-legend__mark--bad {
+  color: var(--danger);
+}

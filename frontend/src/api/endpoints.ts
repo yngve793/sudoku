@@ -1,4 +1,4 @@
-import { ApiError, request, setSession } from './client'
+import { ApiError, request, setSession, uploadForm, type UploadOptions } from './client'
 import type {
   CheckResponse,
   CompletedGame,
@@ -7,6 +7,10 @@ import type {
   GameUpdateRequest,
   Hint,
   HintStage,
+  ImportBoard,
+  ImportCheck,
+  Corner,
+  Recognition,
   Leaderboard,
   LeaderboardMe,
   LeaderboardPeriod,
@@ -87,4 +91,25 @@ export const scoresApi = {
     request<Leaderboard>(`/leaderboard${query({ difficulty, period, limit })}`, { auth: false }),
   leaderboardMe: (difficulty: Difficulty | null, period: LeaderboardPeriod) =>
     request<LeaderboardMe>(`/leaderboard/me${query({ difficulty, period })}`),
+}
+
+export const importsApi = {
+  /**
+   * Multipart upload of the (already re-encoded) photo. `corners` overrides
+   * grid detection, in pixels of the uploaded image (TL, TR, BR, BL).
+   */
+  recognize: (image: Blob, corners: readonly Corner[] | null, options: UploadOptions = {}) =>
+    uploadForm<Recognition>(
+      '/imports/recognize',
+      () => {
+        const form = new FormData()
+        form.append('file', image, 'photo.jpg')
+        if (corners) form.append('corners', JSON.stringify(corners))
+        return form
+      },
+      options,
+    ),
+  check: (body: ImportBoard, signal?: AbortSignal) =>
+    request<ImportCheck>('/imports/check', { method: 'POST', body, signal }),
+  start: (body: ImportBoard) => post<Game>('/games/import', body),
 }

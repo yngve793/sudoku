@@ -45,6 +45,8 @@ def error_responses(*codes: int) -> dict[int | str, dict[str, Any]]:
         403: "Forbidden",
         404: "Not found",
         409: "Conflict",
+        413: "Payload too large",
+        415: "Unsupported media type",
         422: "Validation error",
         429: "Rate limited",
         503: "Service unavailable",

@@ -13,6 +13,7 @@ The backend never implements Sudoku logic itself; every call goes through this m
 from __future__ import annotations
 
 from importlib.metadata import version
+from typing import NamedTuple
 
 import sudoku_generator as sg
 import sudoku_validator as sv
@@ -27,12 +28,15 @@ from sudoku_validator import (
     Step,
     ValidationReport,
     cell_name,
+    count_solutions,
     find_contradiction,
     find_errors,
     format_grid,
+    is_consistent,
     next_hint,
     propagate,
     rate,
+    solve,
 )
 
 from sudoku_api.domain import Difficulty
@@ -54,15 +58,18 @@ __all__ = [
     "Symmetry",
     "ValidationReport",
     "cell_name",
+    "count_solutions",
     "find_contradiction",
     "find_errors",
     "format_grid",
     "generate",
+    "is_consistent",
     "next_hint",
     "parse",
     "propagate",
     "rate",
     "rated_difficulty",
+    "solve",
     "validate_puzzle",
 ]
 
@@ -102,4 +109,37 @@ def generate(
     """`sudoku_generator.generate`; raises `GenerationError` when the budget runs out."""
     return sg.generate(
         to_validator_difficulty(difficulty), seed=seed, symmetry=symmetry, timeout=timeout
+    )
+
+
+def givens_solution_count(givens: str) -> int:
+    """0 (inconsistent or unsolvable), 1, or 2 meaning two or more. Constraint-only."""
+    grid = parse(givens)
+    if not is_consistent(grid):
+        return 0
+    return min(count_solutions(grid, 2), 2)
+
+
+class GivensRating(NamedTuple):
+    """Picklable summary of `validate_puzzle(givens)` for an imported puzzle."""
+
+    is_valid_import: bool  # consistent and exactly one solution (checks 2 and 3)
+    difficulty: str | None  # None = Unrated (needs techniques beyond the rated set)
+    rating_score: int
+    techniques: dict[str, int]
+
+
+def rate_givens(givens: str) -> GivensRating:
+    """The insertion gate for imports: `validate_puzzle` without a claimed level.
+
+    Top-level and picklable so it can run in the worker process pool. A puzzle the logical
+    solver cannot finish is still importable, but Unrated.
+    """
+    report = validate_puzzle(parse(givens))
+    rating = report.rating
+    return GivensRating(
+        is_valid_import=report.is_consistent and report.solution_count == 1,
+        difficulty=None if rating.difficulty is None else str(rating.difficulty),
+        rating_score=rating.score,
+        techniques=dict(rating.techniques),
     )

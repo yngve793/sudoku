@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from sudoku_api.domain import Difficulty, GameStatus
+from sudoku_api.domain import Difficulty, GameSource, GameStatus
 from sudoku_api.schemas.common import Grid, Notes
 from sudoku_api.schemas.search import SearchCosts, SearchTree
 
@@ -32,7 +32,10 @@ class GameOut(BaseModel):
     """Game state. Deliberately has no `solution` field."""
 
     id: int
-    difficulty: Difficulty
+    difficulty: Difficulty | None = Field(
+        description="Rated difficulty; null only for imported puzzles that are Unrated"
+    )
+    source: GameSource = Field(description="`imported` games are excluded from the leaderboard")
     status: GameStatus
     givens: str
     current: str

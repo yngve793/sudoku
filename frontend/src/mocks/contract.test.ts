@@ -11,10 +11,20 @@ import addFormatsPlugin from 'ajv-formats'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { apiUrl } from '../api/client'
-import type { SearchTree } from '../api/types'
+import type { ImportCheck, Recognition, SearchTree } from '../api/types'
 import { createTree } from '../features/search/searchReducer'
+import { findContradiction } from '../features/search/constraints'
 import { db, DEMO_USER } from './db'
+import {
+  HANDWRITTEN_READ,
+  IMPORT_GIVENS,
+  IMPORT_SOLUTION,
+  MISREAD_CELL,
+  MISREAD_TRUE_DIGIT,
+  simulateImportError,
+} from './imports'
 import { server } from './node'
+import { fakeJpeg, fakePng } from '../test/images'
 
 // ---------- OpenAPI document (read-only, via a relative path like the validator fixture) ----------
 
@@ -26,6 +36,7 @@ interface OpenApiResponse {
 }
 interface OpenApiOperation {
   operationId?: string
+  requestBody?: { content?: Record<string, { schema?: JsonObject }> }
   responses: Record<string, OpenApiResponse>
 }
 interface OpenApiDocument {
@@ -144,6 +155,38 @@ const seen = new Map<string, Set<number>>()
 interface Call {
   token?: string | null
   body?: unknown
+  /** multipart/form-data body (checked against the operation's declared form schema). */
+  form?: FormData
+}
+
+function resolveSchema(schema: JsonObject | undefined): JsonObject | undefined {
+  const ref = schema?.$ref
+  if (typeof ref !== 'string') return schema
+  return spec?.components.schemas[ref.replace('#/components/schemas/', '')]
+}
+
+/**
+ * The mocks receive exactly what the app sends, so check the app's multipart
+ * body against the declared form schema: required fields present, no unknown
+ * fields, binary fields are files and the rest are strings.
+ */
+function checkMultipart(route: Route, form: FormData, where: string): void {
+  const schema = resolveSchema(
+    route.operation.requestBody?.content?.['multipart/form-data']?.schema,
+  )
+  if (!schema) throw new Error(`${where}: operation declares no multipart/form-data body`)
+  const props = isObject(schema.properties) ? schema.properties : {}
+  const required = Array.isArray(schema.required) ? schema.required : []
+  for (const name of required)
+    if (typeof name === 'string' && !form.has(name))
+      throw new Error(`${where}: multipart field "${name}" is required`)
+  for (const [name, value] of form.entries()) {
+    const prop = props[name]
+    if (!isObject(prop)) throw new Error(`${where}: multipart field "${name}" is not declared`)
+    const binary = prop.contentMediaType !== undefined || prop.format === 'binary'
+    if (binary !== (typeof value !== 'string'))
+      throw new Error(`${where}: multipart field "${name}" should be ${binary ? 'a file' : 'text'}`)
+  }
 }
 
 interface Reply<T = Record<string, unknown>> {
@@ -155,22 +198,24 @@ interface Reply<T = Record<string, unknown>> {
 async function call<T = Record<string, unknown>>(
   method: string,
   pathAndQuery: string,
-  { token, body }: Call = {},
+  { token, body, form }: Call = {},
 ): Promise<Reply<T>> {
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
   if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const path = API_PREFIX + pathAndQuery.split('?')[0]!
+  const route = findRoute(method, path)
+  if (!route)
+    throw new Error(`${method} ${pathAndQuery}: no such operation in backend/openapi.json`)
+  if (form) checkMultipart(route, form, `${method} ${pathAndQuery}`)
   const res = await fetch(apiUrl(pathAndQuery), {
     method,
     headers,
     credentials: 'include',
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
   })
   const text = await res.text()
   const where = `${method} ${pathAndQuery} -> ${res.status}`
-  const path = API_PREFIX + pathAndQuery.split('?')[0]!
-  const route = findRoute(method, path)
-  if (!route) throw new Error(`${where}: no such operation in backend/openapi.json`)
   const key = `${method} ${route.template}`
   seen.set(key, (seen.get(key) ?? new Set()).add(res.status))
 
@@ -231,6 +276,32 @@ const solutionOf = (id: number): string => {
   const game = db.games.find((g) => g.id === id)
   if (!game) throw new Error(`game ${id} missing`)
   return game.solution
+}
+
+// ---------- photo-import helpers ----------
+
+function photoForm(file: Blob, corners?: string): FormData {
+  const form = new FormData()
+  form.append('file', file, 'photo.jpg')
+  if (corners !== undefined) form.append('corners', corners)
+  return form
+}
+
+function setCell(grid: string, index: number, digit: number): string {
+  return grid.slice(0, index) + String(digit) + grid.slice(index + 1)
+}
+
+/** The import puzzle plus one wrong but locally legal given: consistent, yet unsolvable. */
+function noSolutionGivens(): string {
+  for (let i = 0; i < 81; i++) {
+    if (IMPORT_GIVENS[i] !== '0') continue
+    for (let d = 1; d <= 9; d++) {
+      if (String(d) === IMPORT_SOLUTION[i]) continue
+      const grid = setCell(IMPORT_GIVENS, i, d)
+      if (!findContradiction([...grid].map(Number))) return grid
+    }
+  }
+  throw new Error('no candidate found')
 }
 
 // ---------- tests ----------
@@ -510,6 +581,8 @@ describe('MSW mocks follow backend/openapi.json', () => {
       ['POST', '/games/1/search/propagate'],
       ['GET', '/scores/me'],
       ['GET', '/leaderboard/me'],
+      ['POST', '/imports/check'],
+      ['POST', '/games/import'],
     ] as const) {
       await expectError(
         call(method, path, { body: method === 'GET' ? undefined : {} }),
@@ -665,6 +738,234 @@ describe('MSW mocks follow backend/openapi.json', () => {
       409,
       'version_conflict',
     )
+  })
+
+  it('photo import: recognize (multipart) -> check -> games/import', async () => {
+    // 401 on the multipart endpoint.
+    await expectError(
+      call('POST', '/imports/recognize', { form: photoForm(fakeJpeg(1200, 900)) }),
+      401,
+      'not_authenticated',
+    )
+    await expectError(
+      call('POST', '/imports/recognize', { token: 'nope', form: photoForm(fakeJpeg(1200, 900)) }),
+      401,
+      'invalid_token',
+    )
+    const token = await login()
+
+    const rec = await call<Recognition>('POST', '/imports/recognize', {
+      token,
+      form: photoForm(fakeJpeg(1200, 900)),
+    })
+    expect(rec.status).toBe(200)
+    expect(rec.body.image_size).toEqual({ width: 1200, height: 900 })
+    expect(rec.body.cells).toHaveLength(81)
+    expect(rec.body.cells.some((c) => c.auto_corrected)).toBe(true)
+    expect(rec.body.cells.some((c) => c.kind === 'handwritten' && c.confidence < 0.8)).toBe(true)
+    // Corners round-trip: the client sends back what it received.
+    const again = await call<Recognition>('POST', '/imports/recognize', {
+      token,
+      form: photoForm(fakeJpeg(1200, 900), JSON.stringify(rec.body.corners)),
+    })
+    expect(again.status).toBe(200)
+    expect(again.body.corners).toEqual(rec.body.corners)
+    // PNG and WebP are accepted too.
+    expect(
+      (await call('POST', '/imports/recognize', { token, form: photoForm(fakePng(640, 480)) }))
+        .status,
+    ).toBe(200)
+
+    // Declared errors.
+    await expectError(
+      call('POST', '/imports/recognize', {
+        token,
+        form: photoForm(fakeJpeg(1200, 900), '[[1,2],[3,4]]'),
+      }),
+      422,
+      'validation_error',
+    )
+    const noFile = new FormData()
+    noFile.append('corners', '[[0,0],[1,0],[1,1],[0,1]]')
+    await expect(call('POST', '/imports/recognize', { token, form: noFile })).rejects.toThrow(
+      /"file" is required/,
+    )
+    await expectError(
+      call('POST', '/imports/recognize', {
+        token,
+        form: photoForm(new Blob(['hello'], { type: 'text/plain' })),
+      }),
+      415,
+      'unsupported_image',
+    )
+    await expectError(
+      call('POST', '/imports/recognize', {
+        token,
+        form: photoForm(new Blob([new Uint8Array(10 * 1024 * 1024 + 1)], { type: 'image/jpeg' })),
+      }),
+      413,
+      'image_too_large',
+    )
+    await expectError(
+      call('POST', '/imports/recognize', {
+        token,
+        form: photoForm(new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0x00, 1, 2, 3])])),
+      }),
+      422,
+      'image_unreadable',
+    )
+    await expectError(
+      call('POST', '/imports/recognize', {
+        token,
+        form: photoForm(fakeJpeg(1200, 900), '[[10,10],[11,10],[11,11],[10,11]]'),
+      }),
+      422,
+      'no_grid_found',
+    )
+    for (const [status, code] of [
+      [429, 'rate_limited'],
+      [503, 'recognition_unavailable'],
+    ] as const) {
+      simulateImportError('recognize', { status, code })
+      await expectError(
+        call('POST', '/imports/recognize', { token, form: photoForm(fakeJpeg(100, 100)) }),
+        status,
+        code,
+      )
+    }
+    simulateImportError('recognize', null)
+
+    // Check: givens decide the solution count; `current` decides consistency.
+    const readCurrent = [...IMPORT_GIVENS]
+      .map((g, i) => (g !== '0' ? g : String(HANDWRITTEN_READ[i] ?? 0)))
+      .join('')
+    const misread = await call<ImportCheck>('POST', '/imports/check', {
+      token,
+      body: { givens: IMPORT_GIVENS, current: readCurrent },
+    })
+    expect(misread.status).toBe(200)
+    expect(misread.body).toMatchObject({ consistent: false, solution_count: 1 })
+    expect(misread.body.contradiction?.cells).toContain(MISREAD_CELL)
+    const fixed = setCell(readCurrent, MISREAD_CELL, MISREAD_TRUE_DIGIT)
+    const ok = await call<ImportCheck>('POST', '/imports/check', {
+      token,
+      body: { givens: IMPORT_GIVENS, current: fixed },
+    })
+    expect(ok.body).toMatchObject({ consistent: true, contradiction: null, solution_count: 1 })
+    expect(ok.body.rating_score).not.toBeNull()
+    const sparse = IMPORT_GIVENS.slice(0, 27) + '0'.repeat(54)
+    const many = await call<ImportCheck>('POST', '/imports/check', {
+      token,
+      body: { givens: sparse, current: sparse },
+    })
+    expect(many.body).toMatchObject({ solution_count: 2, difficulty: null, rating_score: null })
+    const unsolvable = noSolutionGivens()
+    const none = await call<ImportCheck>('POST', '/imports/check', {
+      token,
+      body: { givens: unsolvable, current: unsolvable },
+    })
+    expect(none.body).toMatchObject({ consistent: true, solution_count: 0 })
+    await expectError(
+      call('POST', '/imports/check', { token, body: { givens: 'abc', current: IMPORT_GIVENS } }),
+      422,
+      'validation_error',
+    )
+    const tampered = setCell(IMPORT_GIVENS, 0, 9)
+    await expectError(
+      call('POST', '/imports/check', { token, body: { givens: IMPORT_GIVENS, current: tampered } }),
+      422,
+      'givens_modified',
+    )
+    simulateImportError('check', { status: 429, code: 'rate_limited' })
+    await expectError(
+      call('POST', '/imports/check', { token, body: { givens: IMPORT_GIVENS, current: fixed } }),
+      429,
+      'rate_limited',
+    )
+    simulateImportError('check', null)
+
+    // Import.
+    const dup = setCell(IMPORT_GIVENS, 2, 5)
+    for (const [givens, code] of [
+      [dup, 'puzzle_inconsistent'],
+      [unsolvable, 'no_solution'],
+      [sparse, 'multiple_solutions'],
+    ] as const)
+      await expectError(
+        call('POST', '/games/import', { token, body: { givens, current: givens } }),
+        422,
+        code,
+      )
+    await expectError(
+      call('POST', '/games/import', { token, body: { givens: IMPORT_GIVENS, current: tampered } }),
+      422,
+      'givens_modified',
+    )
+    await expectError(
+      call('POST', '/games/import', { token, body: { givens: IMPORT_GIVENS } }),
+      422,
+      'validation_error',
+    )
+    simulateImportError('import', { status: 429, code: 'rate_limited' })
+    await expectError(
+      call('POST', '/games/import', { token, body: { givens: IMPORT_GIVENS, current: fixed } }),
+      429,
+      'rate_limited',
+    )
+    simulateImportError('import', null)
+    const generated = await newGame(token)
+    const created = await call<WireGame & { source: string; difficulty: string | null }>(
+      'POST',
+      '/games/import',
+      { token, body: { givens: IMPORT_GIVENS, current: fixed } },
+    )
+    expect(created.status).toBe(201)
+    expect(created.body).toMatchObject({
+      source: 'imported',
+      givens: IMPORT_GIVENS,
+      current: fixed,
+    })
+    // It abandoned the generated game and is now the current one.
+    const cur = await call<WireGame>('GET', '/games/current', { token })
+    expect(cur.body.id).toBe(created.body.id)
+    expect(db.games.find((g) => g.id === generated.id)?.status).toBe('abandoned')
+
+    // Finish it: in stats and history, never on the leaderboard.
+    const solved = await call<WireGame>('PATCH', `/games/${created.body.id}`, {
+      token,
+      body: {
+        current: IMPORT_SOLUTION,
+        notes: {},
+        elapsed_seconds: 60,
+        version: created.body.version,
+      },
+    })
+    expect(solved.status).toBe(200)
+    const done = await call<{ score: number }>('POST', `/games/${created.body.id}/complete`, {
+      token,
+      body: {},
+    })
+    expect(done.status).toBe(200)
+    const scores = await call<{ history: { game_id: number; source: string }[] }>(
+      'GET',
+      '/scores/me',
+      { token },
+    )
+    expect(scores.body.history.find((h) => h.game_id === created.body.id)?.source).toBe('imported')
+    const me = await call<{ rank: number | null; total: number }>('GET', '/leaderboard/me', {
+      token,
+    })
+    expect(me.body.rank).toBeNull()
+
+    // An Unrated imported game serialises `difficulty: null`.
+    const game = db.games.find((g) => g.id === created.body.id)!
+    game.difficulty = null
+    const unrated = await call<{ difficulty: string | null }>('GET', `/games/${game.id}`, { token })
+    expect(unrated.body.difficulty).toBeNull()
+    const history = await call<{ history: { difficulty: string | null }[] }>('GET', '/scores/me', {
+      token,
+    })
+    expect(history.body.history.some((h) => h.difficulty === null)).toBe(true)
   })
 
   it('every operation in backend/openapi.json was exercised with a 2xx response', () => {

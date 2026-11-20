@@ -5,10 +5,12 @@ A React + Python Sudoku game. Design and contracts: [PLAN.md](PLAN.md). Human do
 ## Layout and dependency direction
 
 ```
-validator/  (sudoku_validator, stdlib only)  ←  generator/  ←  backend/ (FastAPI)  ←HTTP←  frontend/ (React)
+validator/ (sudoku_validator, stdlib only) ← generator/ ─┐
+                                          ← vision/ ────┴← backend/ (FastAPI) ←HTTP← frontend/ (React)
 ```
 
-- `validator` never imports `generator`; it is the independent judge of generated puzzles.
+- `validator` never imports `generator` or `vision`; it is the independent judge of generated and recognised puzzles.
+- `vision` (photo recognition) uses OpenCV and onnxruntime. Its training dependencies live in a separate group: `uv run --package sudoku-vision --group train ...`.
 - Each folder's agent notes live in `<folder>/AGENTS.md` (Docker: `docker/AGENTS.md`). Read the relevant one before changing code there.
 
 ## Commands
@@ -16,7 +18,7 @@ validator/  (sudoku_validator, stdlib only)  ←  generator/  ←  backend/ (Fas
 | What | Command |
 |---|---|
 | Verify everything (fast) | `./scripts/verify.sh` |
-| Verify one area | `./scripts/verify.sh --only backend` (or `validator,generator,backend,frontend`) |
+| Verify one area | `./scripts/verify.sh --only backend` (or `validator,generator,vision,backend,frontend`) |
 | + mocked e2e / real-backend e2e | `--e2e` / `--full` (isolated ports 8765/5765 and a temp DB) |
 | + compose smoke test | `--docker` (isolated project `sudoku-verify` on 18080/18025/15432; safe while your stack runs) |
 | Flaky-test hunt | `--repeat 5` |

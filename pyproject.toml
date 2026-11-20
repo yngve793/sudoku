@@ -2,7 +2,7 @@
 name = "sudoku-workspace"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["sudoku-validator", "sudoku-generator", "sudoku-api"]
+dependencies = ["sudoku-validator", "sudoku-generator", "sudoku-vision", "sudoku-api"]
 
 [tool.uv]
 package = false
@@ -10,10 +10,11 @@ package = false
 [tool.uv.sources]
 sudoku-validator = { workspace = true }
 sudoku-generator = { workspace = true }
+sudoku-vision = { workspace = true }
 sudoku-api = { workspace = true }
 
 [tool.uv.workspace]
-members = ["validator", "generator", "backend"]
+members = ["validator", "generator", "vision", "backend"]
 
 [dependency-groups]
 dev = [

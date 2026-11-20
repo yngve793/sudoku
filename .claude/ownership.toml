@@ -16,6 +16,9 @@ paths = ["validator/", "uv.lock"]
 [agents.sudoku-generator]
 paths = ["generator/", "uv.lock"]
 
+[agents.sudoku-vision]
+paths = ["vision/", "uv.lock"]
+
 [agents.sudoku-api]
 paths = ["backend/", ".env.example", "uv.lock"]
 exclude = ["backend/Dockerfile", "backend/Dockerfile.dockerignore", "backend/docker-entrypoint.sh"]

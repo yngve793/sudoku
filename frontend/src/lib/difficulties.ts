@@ -44,3 +44,8 @@ export const DIFFICULTY_INFO: Record<Difficulty, DifficultyInfo> = {
     description: 'The hardest puzzles that can still be solved without guessing.',
   },
 }
+
+/** Label for a possibly unrated difficulty (imported puzzles may be `null`). */
+export function difficultyLabel(difficulty: Difficulty | null): string {
+  return difficulty ? DIFFICULTY_INFO[difficulty].label : 'Unrated'
+}

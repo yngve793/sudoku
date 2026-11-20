@@ -20,6 +20,9 @@ EXPECTED = {
     ("post", "/api/v1/auth/logout"),
     ("get", "/api/v1/me"),
     ("post", "/api/v1/games"),
+    ("post", "/api/v1/games/import"),
+    ("post", "/api/v1/imports/recognize"),
+    ("post", "/api/v1/imports/check"),
     ("get", "/api/v1/games/current"),
     ("get", "/api/v1/games/{game_id}"),
     ("patch", "/api/v1/games/{game_id}"),
@@ -48,6 +51,9 @@ def test_every_response_has_a_model(app: FastAPI) -> None:
                 schema = resp.get("content", {}).get("application/json", {}).get("schema")
                 assert schema, (method, path, status)
                 assert "$ref" in schema, (method, path, status)
+                # /health reports 503 with its own HealthOut body (database down).
+                if status.startswith(("4", "5")) and path != "/api/v1/health":
+                    assert schema["$ref"].endswith("/ErrorOut"), (method, path, status)
     assert "HTTPValidationError" not in spec["components"]["schemas"]
 
 
@@ -69,6 +75,9 @@ def test_contract_field_names(app: FastAPI) -> None:
         "hint_costs",
     } <= set(schemas["GameOut"]["properties"])  # fmt: skip
     assert set(schemas["HintCosts"]["properties"]) == {"1", "2", "3"}
+    assert schemas["GameSource"]["enum"] == ["generated", "imported"]
+    assert "source" in schemas["GameOut"]["required"]
+    assert "source" in schemas["ScoreHistoryItem"]["required"]
     assert schemas["Difficulty"]["enum"] == [
         "beginner", "easy", "medium", "hard", "expert", "master", "extreme",
     ]  # fmt: skip

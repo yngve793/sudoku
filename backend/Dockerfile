@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Sudoku API image. Build context MUST be the repository root (the backend depends on the
-# validator and generator workspace packages):
+# validator, generator and vision workspace packages):
 #
 #   docker build -f backend/Dockerfile -t sudoku-api .
 #
@@ -25,9 +25,13 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /src
 
 # 1) Third-party dependencies only (cached until the lockfile or a pyproject changes).
+#    --no-dev drops the `dev` group; vision's `train` group (torch, onnx) is not a default
+#    group, so it is never installed either. Runtime deps include opencv-python-headless and
+#    onnxruntime, whose manylinux wheels need no extra apt packages on slim-trixie.
 COPY pyproject.toml uv.lock ./
 COPY validator/pyproject.toml validator/pyproject.toml
 COPY generator/pyproject.toml generator/pyproject.toml
+COPY vision/pyproject.toml vision/pyproject.toml
 COPY backend/pyproject.toml backend/pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package sudoku-api --extra postgres \
@@ -37,6 +41,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #    needs the virtualenv.
 COPY validator/src validator/src
 COPY generator/src generator/src
+# Includes src/sudoku_vision/models/ (ONNX model + metadata) when present. Hatchling ships it
+# via `artifacts`, so it lands in site-packages even with --no-editable. The folder may be
+# missing or empty: COPY of the parent directory works either way.
+COPY vision/src vision/src
 COPY backend/src backend/src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package sudoku-api --extra postgres --no-editable

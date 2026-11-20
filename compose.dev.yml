@@ -7,7 +7,7 @@
 #   Postgres:               localhost:5432   (POSTGRES_PORT; published by docker-compose.yml, 127.0.0.1 only)
 #   nginx build:            http://localhost:8080        (APP_PORT; still available, built SPA)
 #
-# - The api runs `uvicorn --reload` against the bind-mounted validator/generator/backend
+# - The api runs `uvicorn --reload` against the bind-mounted validator/generator/vision/backend
 #   sources (they shadow the copies installed in the image via PYTHONPATH). Dependency or
 #   migration changes still need `--build` (and a rerun of `migrate`).
 # - The Vite container sits on the `edge` network next to the api and proxies /api to
@@ -17,7 +17,7 @@ name: sudoku
 services:
   api:
     environment:
-      PYTHONPATH: /src/backend/src:/src/generator/src:/src/validator/src
+      PYTHONPATH: /src/backend/src:/src/generator/src:/src/vision/src:/src/validator/src
       # Bind-mount file events are not reliable on every Docker host; poll instead.
       WATCHFILES_FORCE_POLLING: "true"
       FRONTEND_URL: http://localhost:5173
@@ -28,10 +28,12 @@ services:
       - --reload
       - --reload-dir=/src/backend/src
       - --reload-dir=/src/generator/src
+      - --reload-dir=/src/vision/src
       - --reload-dir=/src/validator/src
     volumes:
       - ./backend/src:/src/backend/src:ro
       - ./generator/src:/src/generator/src:ro
+      - ./vision/src:/src/vision/src:ro
       - ./validator/src:/src/validator/src:ro
     ports:
       - "127.0.0.1:8000:8000"

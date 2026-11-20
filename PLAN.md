@@ -448,6 +448,131 @@ def propagate(grid: Grid, *, max_placements: int = 81) -> Propagation
   - Auto mode calls the propagate endpoint.
   - The tree is saved through the existing debounced autosave PATCH.
 
+### 5.6 Import a puzzle from a photo — `vision/` (`sudoku_vision`)
+
+The player drops, pastes or takes a photo of a printed Sudoku. Partly solved puzzles work too: the **printed givens** and the **handwritten entries** are both read.
+
+The player always **reviews and corrects** the result before playing. The game then continues in the normal frontend. Recognition runs **locally on our server**, photos are **never stored**, and imported games are **kept off the public leaderboard**.
+
+#### Pipeline (`sudoku_vision`)
+1. **Decode the image.** Check the magic bytes and enforce the size limits (≤ 10 MB, ≤ 40 MP, decompression-bomb safe). Apply EXIF orientation and downscale to ≤ 2000 px on the long side.
+2. **Find the grid.** Grayscale and adaptive threshold, then take the largest convex 4-point contour, with a Hough-line fallback. The caller may pass `corners` to override detection, which the review UI uses after the player adjusts them.
+3. **Straighten it.** A perspective warp to a square, followed by an optional mild de-curving pass.
+4. **Read the cells.** Remove grid lines and border-touching components, then use ink-ratio detection for empty cells.
+5. **Classify each non-empty cell.** A small model outputs:
+   - the digit 1–9;
+   - the **kind**, `given` (printed) or `handwritten`;
+   - a confidence and the top-3 alternatives.
+6. **Correct using the constraints.** If the givens contradict each other, or have 0 or ≥ 2 solutions, try the top-3 alternatives of the lowest-confidence **given** cells, using the validator's public API (`find_contradiction`, `count_solutions`).
+   - The correction is accepted only if the result is consistent and has a unique solution.
+   - Every changed cell is flagged `auto_corrected`.
+   - Handwritten cells are **never** corrected against the solution, because that would leak it. They are only flagged when they contradict a given.
+
+**Model:**
+- **Inference** runs on numpy, opencv-python-headless and onnxruntime. The model is an ONNX file under 2 MB, committed together with a JSON metadata file (training data, accuracy, version). **No pickle.**
+- **Training** has its own dependency group (`train`) and is reproducible through `vision/scripts/train.py`. Printed digits are rendered synthetically from open fonts; handwritten digits come from MNIST or EMNIST. Downloads go to a gitignored cache and are verified by checksum, and their licenses are recorded.
+- **Tests** use synthetic "phone photos": rendered grids with printed and handwritten digits, perspective, blur, lighting gradients, noise, JPEG artefacts and backgrounds. Labelled real photos go under `vision/tests/photos/` when available.
+- **Targets on the synthetic set:**
+  - grid found in ≥ 98 % of photos;
+  - printed-digit accuracy ≥ 99.5 %;
+  - handwritten-digit accuracy ≥ 97 %;
+  - given-vs-handwritten classification ≥ 98 %;
+  - p95 recognition time < 1.5 s per photo.
+
+**Public API:**
+```python
+@dataclass(frozen=True)
+class CellReading:
+    index: int                                  # 0..80
+    digit: int                                  # 0 = empty
+    kind: Literal["empty", "given", "handwritten"]
+    confidence: float                           # 0..1
+    alternatives: tuple[tuple[int, float], ...] # top-3 (digit, probability), best first
+    auto_corrected: bool
+
+@dataclass(frozen=True)
+class Recognition:
+    corners: tuple[tuple[float, float], ...]    # TL, TR, BR, BL in (oriented) input-image pixels
+    image_size: tuple[int, int]                 # (width, height) of the oriented input image
+    cells: tuple[CellReading, ...]              # 81
+    grid_confidence: float
+    warnings: tuple[str, ...]                   # e.g. "givens have multiple solutions"
+
+class RecognitionError(Exception):
+    code: Literal["image_unreadable", "unsupported_image", "image_too_large", "no_grid_found"]
+
+def recognize(image: bytes, *, corners: Sequence[tuple[float, float]] | None = None) -> Recognition
+```
+`sudoku_vision` depends only on `sudoku_validator`, and only through its public API.
+
+#### Backend
+- **`POST /api/v1/imports/recognize`** (auth required): multipart, with field `file` (jpeg, png or webp) and an optional field `corners`, a JSON array of four `[x, y]` pairs.
+  - Returns `RecognitionOut`, which has the same fields as `Recognition`; `alternatives` is `[{digit, p}]`.
+  - It runs in the existing process pool with a 10 s timeout.
+  - Errors:
+    - 413 `image_too_large`;
+    - 415 `unsupported_image`;
+    - 422 `image_unreadable` / `no_grid_found` / `validation_error`;
+    - 429 `rate_limited` (`IMPORT_RATE_LIMIT`, default `10/minute`);
+    - 503 `recognition_unavailable` (a timeout or a worker failure).
+  - The image is processed in memory and never written or logged.
+- **`POST /api/v1/imports/check`** with body `{givens, current}` returns `{consistent, contradiction, solution_count, difficulty, rating_score}`.
+  - `solution_count` is 0, 1 or 2 (meaning ≥ 2). `difficulty` is null when unrated or invalid.
+  - The response **never contains the solution**. This endpoint gives live feedback during review.
+- **`POST /api/v1/games/import`** with body `{givens, current}` returns **201 `GameOut`**.
+  - `current` must keep the givens (otherwise 422 `givens_modified`). Handwritten entries go into `current`.
+  - The givens must be consistent and have exactly one solution. Otherwise it returns 422 `puzzle_inconsistent`, `no_solution` or `multiple_solutions`.
+  - The puzzle is rated with `rate()`. If it needs techniques beyond our set, it is stored with `difficulty = null`, shown as "Unrated", with an expert base score and a 45-minute par.
+  - It abandons the current in-progress game, as `POST /games` does.
+  - If the givens already exist in `puzzles`, that row is reused.
+- **DB** (migration `0003`):
+  - `puzzles.source` `'generated' | 'imported'`, default `'generated'`;
+  - `puzzles.difficulty` becomes nullable (only imported puzzles may be null);
+  - imported puzzles never enter the pool.
+- **API shape changes:**
+  - `GameOut` adds `source: "generated" | "imported"`, and `difficulty` becomes `Difficulty | null`;
+  - score history items add `source`.
+  - **The leaderboard excludes imported games** (including `/leaderboard/me`). Personal stats and history include them.
+
+**Contract as published** (`backend/openapi.json`):
+- **Schemas:** `RecognizeImportForm` (multipart: `file`, optional `corners`), `RecognitionOut`, `CellReadingOut`, `DigitAlternative {digit, p}`, `ImageSize {width, height}`, `ImportBoardIn {givens, current}`, `ImportCheckOut`, and the enum `GameSource`.
+- **`corners`** are `[x, y]` pairs in both directions, so the client can send back what it received.
+- **Decision: `/imports/check` computes `solution_count` and the rating from the givens only.** Counting the solutions of `current` would reveal whether the handwritten entries are wrong, which would leak the solution. `consistent` and `contradiction` describe `current`, and are constraint-only.
+- **Decision:** `/imports/check` has its own `IMPORT_CHECK_RATE_LIMIT` (default `120/minute`), because it runs on every debounced edit.
+
+**Implementation decisions:**
+- **`games.source` and `puzzles.source`.** The leaderboard filters on `games.source = 'generated'`. An import may reuse an existing generated puzzle row, so filtering on the puzzle would let someone solve a known puzzle offline, import it, and post a ranked score. `puzzles.source` only keeps imported puzzles out of the pool.
+- **Migration 0003's downgrade loses data:** it deletes imported games and puzzles.
+- **Rating:** `/imports/check` and `/games/import` rate in the worker pool with `IMPORT_RATING_TIMEOUT_SECONDS` (default 3). On a timeout, or if the puzzle can't be solved logically, the result is "Unrated" (`difficulty = null`). Handwritten entries that contradict the givens are accepted, as on a normal board.
+- **Recognition** runs in the worker pool with `RECOGNITION_TIMEOUT_SECONDS` (default 10). `IMPORT_RATE_LIMIT` and the 10 MiB limit are enforced **before and while** the body streams. The photo stays in memory, is never spooled to disk, and is never logged.
+- **nginx** needs a dedicated location for `/api/v1/imports/recognize` with `client_max_body_size 11m` and `proxy_request_buffering off`, so photos aren't buffered to disk. The rest of `/api/` keeps 64 KB.
+
+**Review fixes** (reviewer findings, 2026-11-20):
+- **Rate limit:** `POST /games/import` is limited by `IMPORT_GAME_RATE_LIMIT` (default `10/minute`) and declares 429.
+- **Provisional ratings** (migration 0004):
+  - `difficulty` NULL with `rating_score` NULL means **pending**, for example after a rating timeout. The next import of the same givens re-rates it and updates the row.
+  - `difficulty` NULL with a non-NULL `rating_score` means **genuinely Unrated**, which is final.
+- **Pool and fallback:** when an import reuses a pooled generated puzzle, the pool row is deleted. `create_game` also refuses (503) any reused row that has an imported game, which covers the generator's synchronous fallback too.
+- **Memory:**
+  - the worker converts vision results to plain backend dataclasses, so the API process never loads cv2, onnxruntime or PIL;
+  - `sudoku_vision` imports lazily;
+  - decoding uses per-format pixel caps and 8-bit conversion, under a memory-budget test.
+
+#### Frontend
+- **Entry points:** "Import from photo" on the home and new-game screens.
+  - Supports drag and drop, a file picker, paste from the clipboard, and "Take photo" (`capture="environment"`) on mobile.
+- **Client-side preprocessing:** apply EXIF orientation (`createImageBitmap(..., {imageOrientation: "from-image"})`), downscale to ≤ 2000 px and re-encode as JPEG. This **removes EXIF metadata such as GPS** before upload. Then upload with progress shown.
+- **Review screen:**
+  - The photo with the detected grid outline. The four corners can be dragged, and "Re-detect" re-runs recognition with those `corners`.
+  - An editable 9×9 grid next to it:
+    - each cell shows its digit and its kind (given or handwritten, styled distinctly, never by colour alone);
+    - low-confidence cells (< 0.8) and auto-corrected cells are highlighted, with their alternatives one click away;
+    - the keyboard works as on the board, plus a key that toggles given/handwritten.
+  - Live validation via `/imports/check`, debounced: the contradiction is shown on the board, plus the solution count and the rated difficulty.
+  - "Start game" is enabled only for a consistent, uniquely solvable puzzle. Starting calls `/games/import` and navigates to `/game/:id`.
+- **Imported games** show an "Imported" badge, and difficulty "Unrated" when it's null. The leaderboard explains that imported games aren't ranked.
+- **Accessibility:** everything is keyboard-operable. Corner handles have arrow-key nudging and labels.
+
 ## 6. Agents and ownership
 
 Agents are defined in `.claude/agents/`. Who may change which files is defined **in one place**, `.claude/ownership.toml`, and checked by `scripts/check_ownership.py`. Project-wide rules, commands and the report format are in `CLAUDE.md`, and each area keeps handoff notes in its `AGENTS.md`.
@@ -456,8 +581,9 @@ Agents are defined in `.claude/agents/`. Who may change which files is defined *
 |---|---|---|---|
 | `sudoku-validator` | `validator/`, `uv.lock` (shared) | — | `validator/AGENTS.md` |
 | `sudoku-generator` | `generator/`, `uv.lock` (shared) | validator public API | `generator/AGENTS.md` |
-| `sudoku-api` | `backend/` (except container files), `.env.example`, `uv.lock` | generator + validator public API | `backend/AGENTS.md` |
+| `sudoku-api` | `backend/` (except container files), `.env.example`, `uv.lock` | generator, validator and vision public APIs | `backend/AGENTS.md` |
 | `sudoku-frontend` | `frontend/` (except container files) | `backend/openapi.json` | `frontend/AGENTS.md` |
+| `sudoku-vision` | `vision/`, `uv.lock` (shared) | validator public API | `vision/AGENTS.md` |
 | `sudoku-docker` | Dockerfiles, entrypoint, `nginx.conf`, compose files, `.dockerignore`, `docker/`, CI docker job, Docker section of `.env.example` | everything (read-only) | `docker/AGENTS.md` |
 | `sudoku-reviewer` | nothing (read-only) | — | — |
 

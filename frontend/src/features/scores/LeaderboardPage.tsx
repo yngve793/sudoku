@@ -64,6 +64,9 @@ export function LeaderboardPage() {
         <p className="page__lead">
           Top scores from verified players. Scores are verified by the server.
         </p>
+        <p className="page__note">
+          Games imported from a photo aren&apos;t ranked here; they still count in your own stats.
+        </p>
       </header>
 
       <div className="filters">

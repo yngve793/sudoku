@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     email_rate_limit: str = "3/hour"  # per e-mail address for resend / forgot-password
     hint_rate_limit: str = "30/minute"
     search_rate_limit: str = "120/minute"  # POST /games/{id}/search/propagate
+    import_rate_limit: str = "10/minute"  # POST /imports/recognize
+    import_game_rate_limit: str = "10/minute"  # POST /games/import (inserts puzzle rows)
+    import_check_rate_limit: str = "120/minute"  # POST /imports/check (debounced live review)
 
     # Email
     email_backend: Literal["smtp", "console"] = "console"
@@ -65,6 +68,12 @@ class Settings(BaseSettings):
     pool_worker_enabled: bool = True
     pool_target_per_level: int = Field(default=20, ge=0)
     pool_refill_interval_seconds: float = Field(default=30, gt=0)
+
+    # Photo import (PLAN.md §5.6). Both run in the generator process pool.
+    recognition_timeout_seconds: float = Field(default=10, gt=0)
+    # Rating an imported puzzle; on timeout /imports/check reports `difficulty: null` and
+    # /games/import stores the puzzle as Unrated.
+    import_rating_timeout_seconds: float = Field(default=3, gt=0)
 
     # Leaderboard
     leaderboard_cache_seconds: float = Field(default=30, ge=0)

@@ -9,6 +9,8 @@
 !validator/src/
 !generator/pyproject.toml
 !generator/src/
+!vision/pyproject.toml
+!vision/src/
 
 !backend/pyproject.toml
 !backend/src/

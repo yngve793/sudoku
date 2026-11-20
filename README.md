@@ -33,7 +33,7 @@ Puzzles that need guessing are rejected.
 ```bash
 cp .env.example .env            # set JWT_SECRET to a long random string (>= 32 chars)
 docker compose up --build -d --wait
-./docker/smoke-test.sh          # optional: register -> verify via Mailpit -> play -> hints -> leaderboard
+./docker/smoke-test.sh          # optional: register -> verify via Mailpit -> play -> hints -> photo import -> leaderboard
 ```
 
 - App: <http://localhost:8080>. nginx serves the SPA and proxies `/api/` to the API on the same origin, which the `SameSite=strict` refresh cookie requires.

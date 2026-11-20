@@ -33,6 +33,11 @@ PAR_SECONDS: dict[Difficulty, int] = {
     Difficulty.extreme: 60 * 60,
 }
 
+# Unrated imported puzzles (needing techniques beyond the rated set, PLAN.md §5.6) score like
+# expert with a 45-minute par.
+UNRATED_BASE_POINTS = BASE_POINTS[Difficulty.expert]
+UNRATED_PAR_SECONDS = 45 * 60
+
 # Hint stages: 1 = technique + region, 2 = highlighted cells, 3 = value.
 STAGE_WEIGHTS: dict[int, int] = {1: 1, 2: 2, 3: 4}
 HINT_PENALTY = 10
@@ -76,14 +81,15 @@ def search_penalty(auto_placements: int) -> int:
 
 
 def compute_score(
-    difficulty: Difficulty,
+    difficulty: Difficulty | None,
     elapsed_seconds: int,
     hint_stages: list[int],
     mistakes: int,
     auto_placements: int = 0,
 ) -> ScoreBreakdown:
-    base = BASE_POINTS[difficulty]
-    par = PAR_SECONDS[difficulty]
+    """Score for a solved game; `difficulty=None` means an Unrated imported puzzle."""
+    base = UNRATED_BASE_POINTS if difficulty is None else BASE_POINTS[difficulty]
+    par = UNRATED_PAR_SECONDS if difficulty is None else PAR_SECONDS[difficulty]
     factor = time_factor(max(0, elapsed_seconds), par)
     hint_pen = sum(hint_cost(s) for s in hint_stages)
     mistake_pen = MISTAKE_PENALTY * max(0, mistakes)

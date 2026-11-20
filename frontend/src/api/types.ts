@@ -10,6 +10,8 @@ type Schemas = components['schemas']
 export type Difficulty = Schemas['Difficulty']
 export type LeaderboardPeriod = Schemas['LeaderboardPeriod']
 export type GameStatus = Schemas['GameStatus']
+/** `imported` = from a photo (PLAN.md §5.6); never ranked on the leaderboard. */
+export type GameSource = Schemas['GameSource']
 
 /** All difficulties, easiest first. The check below fails to compile if the enum changes. */
 export const DIFFICULTIES = [
@@ -47,6 +49,15 @@ export type ApiErrorCode =
   | 'no_hint_available'
   | 'board_not_solved'
   | 'puzzle_unavailable'
+  // photo import (PLAN.md §5.6)
+  | 'image_too_large'
+  | 'unsupported_image'
+  | 'image_unreadable'
+  | 'no_grid_found'
+  | 'recognition_unavailable'
+  | 'puzzle_inconsistent'
+  | 'no_solution'
+  | 'multiple_solutions'
 
 // ---------- auth ----------
 export type RegisterRequest = Schemas['RegisterIn']
@@ -82,6 +93,18 @@ export type Contradiction = Schemas['Contradiction']
 export type ContradictionKind = Contradiction['kind']
 export type PropagateResponse = Schemas['PropagateOut']
 export type PropagatePlacement = Schemas['PropagationPlacementOut']
+
+// ---------- photo import (PLAN.md §5.6) ----------
+export type Recognition = Schemas['RecognitionOut']
+export type CellReading = Schemas['CellReadingOut']
+export type CellKind = CellReading['kind']
+export type DigitAlternative = Schemas['DigitAlternative']
+export type ImageSize = Schemas['ImageSize']
+/** One `[x, y]` corner in pixels of the oriented (uploaded) image. */
+export type Corner = Recognition['corners'][number]
+export type ImportBoard = Schemas['ImportBoardIn']
+export type ImportCheck = Schemas['ImportCheckOut']
+export type SolutionCount = ImportCheck['solution_count']
 
 // ---------- scores / leaderboard ----------
 export type ScoresMe = Schemas['ScoresMeOut']

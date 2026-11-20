@@ -158,3 +158,90 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!res.ok) throw new ApiError(res.status, body)
   return body as T
 }
+
+// ---------- multipart upload with progress (XHR: fetch has no upload progress) ----------
+
+export interface UploadOptions {
+  /** Upload progress 0..1 (only while the body is being sent). */
+  onProgress?: (fraction: number) => void
+  signal?: AbortSignal
+}
+
+function abortError(): DOMException {
+  return new DOMException('The upload was cancelled.', 'AbortError')
+}
+
+function sendForm(
+  path: string,
+  makeBody: () => FormData,
+  token: string | null,
+  options: UploadOptions,
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(abortError())
+      return
+    }
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', apiUrl(path))
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Accept', 'application/json')
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      options.signal?.removeEventListener('abort', onAbort)
+      fn()
+    }
+    // Reject at once on cancel; don't rely on every XHR implementation firing `abort`.
+    function onAbort() {
+      settle(() => reject(abortError()))
+      xhr.abort()
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0)
+        options.onProgress?.(Math.min(1, event.loaded / event.total))
+    }
+    xhr.onload = () => {
+      let body: unknown = null
+      const text = xhr.responseText
+      if (text) {
+        try {
+          body = JSON.parse(text) as unknown
+        } catch {
+          body = { detail: text }
+        }
+      }
+      settle(() => resolve({ status: xhr.status, body }))
+    }
+    xhr.onerror = () => settle(() => reject(new TypeError('Network request failed')))
+    xhr.onabort = () => settle(() => reject(abortError()))
+    // The browser sets the multipart Content-Type (with boundary) itself.
+    xhr.send(makeBody())
+  })
+}
+
+/**
+ * POSTs `multipart/form-data` with the bearer token, reporting upload progress.
+ * Like `request`, retries once after a silent refresh on 401. Aborting the
+ * signal rejects with a DOMException named "AbortError".
+ */
+export async function uploadForm<T>(
+  path: string,
+  makeBody: () => FormData,
+  options: UploadOptions = {},
+): Promise<T> {
+  let res = await sendForm(path, makeBody, getAccessToken(), options)
+  if (res.status === 401) {
+    const token = await refreshAccessToken()
+    if (token) res = await sendForm(path, makeBody, token, options)
+  }
+  if (res.status < 200 || res.status >= 300) throw new ApiError(res.status, res.body)
+  return res.body as T
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}

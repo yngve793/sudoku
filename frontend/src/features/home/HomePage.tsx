@@ -2,13 +2,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { authApi, gamesApi, scoresApi } from '../../api/endpoints'
-import { DIFFICULTIES, type Difficulty, type Game } from '../../api/types'
+import { DIFFICULTIES, type Difficulty, type Game, type ScoresMe } from '../../api/types'
 import { Alert } from '../../components/Alert'
 import { Modal } from '../../components/Modal'
 import { Spinner } from '../../components/Spinner'
-import { DIFFICULTY_INFO } from '../../lib/difficulties'
+import { GameBadges } from '../../components/GameBadges'
+import { DIFFICULTY_INFO, difficultyLabel } from '../../lib/difficulties'
 import { errorMessage } from '../../lib/errors'
-import { formatDuration, formatNumber } from '../../lib/format'
+import { formatDate, formatDuration, formatNumber } from '../../lib/format'
 import { meQueryKey, useAuth } from '../auth/authContext'
 import { currentGameQueryKey, useStartGame } from '../game/useStartGame'
 import { DifficultyPicker } from './DifficultyPicker'
@@ -29,9 +30,7 @@ function ResumeCard({ game }: { game: Game }) {
           Continue your game
         </h2>
         <p className="resume-card__meta">
-          <span className={`badge badge--level badge--${game.difficulty}`}>
-            {DIFFICULTY_INFO[game.difficulty].label}
-          </span>
+          <GameBadges difficulty={game.difficulty} source={game.source} />
           <span>{formatDuration(game.elapsed_seconds)} played</span>
           <span>{pct}% filled</span>
         </p>
@@ -109,7 +108,50 @@ function Stats() {
           </tbody>
         </table>
       )}
+      <RecentGames history={scores.data?.history ?? []} />
     </section>
+  )
+}
+
+const STATUS_LABEL = { in_progress: 'In progress', completed: 'Completed', abandoned: 'Abandoned' }
+
+function RecentGames({ history }: { history: ScoresMe['history'] }) {
+  if (!history.length) return null
+  return (
+    <>
+      <h3 className="card__subtitle">Recent games</h3>
+      <ul className="history-list">
+        {history.slice(0, 5).map((item) => (
+          <li key={item.game_id} className="history-list__item">
+            <span className="history-list__badges">
+              <GameBadges difficulty={item.difficulty} source={item.source} />
+            </span>
+            <span className="history-list__meta">
+              {STATUS_LABEL[item.status]}
+              {item.score !== null && ` · ${formatNumber(item.score)} pts`} ·{' '}
+              {formatDate(item.started_at)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+
+function ImportCard() {
+  return (
+    <div className="import-entry">
+      <div>
+        <h3 className="import-entry__title">Got a puzzle on paper?</h3>
+        <p className="import-entry__text">
+          Snap or upload a photo of a printed Sudoku, even a half-solved one. You review what we
+          read before you play.
+        </p>
+      </div>
+      <Link className="button button--secondary" to="/import">
+        Import from photo
+      </Link>
+    </div>
   )
 }
 
@@ -143,6 +185,7 @@ function Dashboard() {
               pending={startGame.isPending ? startGame.variables : null}
               disabled={startGame.isPending}
             />
+            <ImportCard />
           </section>
         </div>
         <aside className="home__side">
@@ -153,7 +196,7 @@ function Dashboard() {
         <Modal title="Start a new game?" onClose={() => setConfirm(null)}>
           <p>
             Starting a {DIFFICULTY_INFO[confirm].label} game will abandon your current{' '}
-            {current.data && DIFFICULTY_INFO[current.data.difficulty].label} game.
+            {current.data && difficultyLabel(current.data.difficulty)} game.
           </p>
           <div className="modal__actions">
             <button type="button" className="button button--ghost" onClick={() => setConfirm(null)}>

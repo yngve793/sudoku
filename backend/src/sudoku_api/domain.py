@@ -21,6 +21,13 @@ class GameStatus(StrEnum):
     abandoned = "abandoned"
 
 
+class GameSource(StrEnum):
+    """Where a game's puzzle came from. Imported games never reach the leaderboard."""
+
+    generated = "generated"
+    imported = "imported"
+
+
 class EmailTokenPurpose(StrEnum):
     verify_email = "verify_email"
     reset_password = "reset_password"  # noqa: S105 - enum value, not a secret

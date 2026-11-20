@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sudoku_api.models.base import Base, UTCDateTime, utcnow
@@ -15,8 +15,16 @@ class Puzzle(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     givens: Mapped[str] = mapped_column(String(81), unique=True)
     solution: Mapped[str] = mapped_column(String(81))
-    difficulty: Mapped[str] = mapped_column(String(16), index=True)
-    rating_score: Mapped[int] = mapped_column(Integer)
+    # Null only for imported puzzles that need techniques beyond the rated set ("Unrated").
+    difficulty: Mapped[str | None] = mapped_column(String(16), index=True)
+    # `generated` | `imported` (GameSource). Imported puzzles never enter the pool.
+    source: Mapped[str] = mapped_column(
+        String(16), default="generated", server_default=text("'generated'")
+    )
+    # NULL = rating pending: an imported puzzle whose rating timed out (pool busy). Its
+    # `difficulty` NULL is then provisional and the next import of the same givens re-rates
+    # it. Genuinely Unrated imports have `difficulty` NULL with a non-NULL `rating_score`.
+    rating_score: Mapped[int | None] = mapped_column(Integer)
     techniques: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     clue_count: Mapped[int] = mapped_column(Integer)
     seed: Mapped[int | None] = mapped_column(BigInteger, default=None)

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from sudoku_api.domain import Difficulty, GameStatus, LeaderboardPeriod
+from sudoku_api.domain import Difficulty, GameSource, GameStatus, LeaderboardPeriod
 from sudoku_api.models import Game, Puzzle, User, utcnow
 
 
@@ -41,7 +41,7 @@ def _period_start(period: LeaderboardPeriod, now: datetime) -> datetime | None:
 
 def _ranked_games_query(
     difficulty: Difficulty | None, period: LeaderboardPeriod
-) -> Select[Game, str, str]:
+) -> Select[Game, str, str | None]:
     stmt = (
         select(Game, User.username, Puzzle.difficulty)
         .join(User, User.id == Game.user_id)
@@ -50,6 +50,8 @@ def _ranked_games_query(
             Game.status == str(GameStatus.completed),
             Game.score.is_not(None),
             User.email_verified_at.is_not(None),  # only verified accounts are public
+            Game.source == str(GameSource.generated),  # imported games are never ranked
+            Puzzle.difficulty.is_not(None),
         )
     )
     if difficulty is not None:
@@ -58,6 +60,11 @@ def _ranked_games_query(
     if start is not None:
         stmt = stmt.where(Game.completed_at >= start)
     return stmt
+
+
+def _ranked_level(level: str | None) -> Difficulty:
+    assert level is not None  # ranked games are generated, so always rated
+    return Difficulty(level)
 
 
 def leaderboard(
@@ -76,7 +83,7 @@ def leaderboard(
             LeaderboardRow(
                 rank=rank,
                 username=username,
-                difficulty=Difficulty(diff),
+                difficulty=_ranked_level(diff),
                 score=game.score,
                 elapsed_seconds=game.elapsed_seconds,
                 hints_used=game.hints_used,
@@ -117,7 +124,7 @@ def leaderboard_rank(
     row = LeaderboardRow(
         rank=ahead + 1,
         username=username,
-        difficulty=Difficulty(diff),
+        difficulty=_ranked_level(diff),
         score=game.score,
         elapsed_seconds=game.elapsed_seconds,
         hints_used=game.hints_used,
@@ -134,8 +141,9 @@ def best_scores(session: Session, user: User) -> dict[Difficulty, Game]:
         .order_by(Game.score.desc(), Game.completed_at.asc())
     ).all()
     best: dict[Difficulty, Game] = {}
-    for game in games:
-        best.setdefault(Difficulty(game.puzzle.difficulty), game)
+    for game in games:  # imported games count too; Unrated ones have no level to be best at
+        if game.puzzle.difficulty is not None:
+            best.setdefault(Difficulty(game.puzzle.difficulty), game)
     return best
 
 

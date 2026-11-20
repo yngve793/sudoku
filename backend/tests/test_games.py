@@ -11,6 +11,7 @@ from tests.conftest import API, Account, solution_of
 GAME_FIELDS = {
     "id",
     "difficulty",
+    "source",
     "status",
     "givens",
     "current",

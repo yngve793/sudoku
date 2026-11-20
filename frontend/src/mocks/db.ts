@@ -10,6 +10,7 @@
 import type {
   Difficulty,
   Game,
+  GameSource,
   HintCosts,
   NotesWire,
   ScoreBreakdown,
@@ -32,7 +33,10 @@ export interface MockUser {
 export interface MockGame {
   id: number
   user_id: number
-  difficulty: Difficulty
+  /** `null` = an Unrated imported puzzle. */
+  difficulty: Difficulty | null
+  /** Optional so older stored mock DBs still load (missing = generated). */
+  source?: GameSource
   status: Game['status']
   givens: string
   solution: string
@@ -92,12 +96,15 @@ export const PAR_SECONDS: Record<Difficulty, number> = {
   master: 45 * 60,
   extreme: 60 * 60,
 }
+/** Unrated imported puzzles score like expert with a 45-minute par (PLAN.md §5.6). */
+export const UNRATED_BASE = BASE_SCORE.expert
+export const UNRATED_PAR_SECONDS = 45 * 60
 export const MISTAKE_PENALTY = 15
 export const SEARCH_COSTS: SearchCosts = { auto_placement: 2 }
 
 export const DEMO_USER = { username: 'demo', email: 'demo@example.com', password: 'password123' }
 
-const STORAGE_KEY = 'sudoku.mock-server-db.v4'
+const STORAGE_KEY = 'sudoku.mock-server-db.v5'
 let persist = false
 
 function hoursAgo(h: number): string {
@@ -165,8 +172,8 @@ function seed(): MockDb {
 }
 
 export function computeScore(game: MockGame): ScoreBreakdown {
-  const base = BASE_SCORE[game.difficulty]
-  const par = PAR_SECONDS[game.difficulty]
+  const base = game.difficulty ? BASE_SCORE[game.difficulty] : UNRATED_BASE
+  const par = game.difficulty ? PAR_SECONDS[game.difficulty] : UNRATED_PAR_SECONDS
   const elapsed = Math.max(0, game.elapsed_seconds)
   const slow = par * 4
   const timeFactor =
@@ -234,6 +241,7 @@ export function toWireGame(game: MockGame): Game {
   return {
     id: game.id,
     difficulty: game.difficulty,
+    source: game.source ?? 'generated',
     status: game.status,
     givens: game.givens,
     current: game.current,

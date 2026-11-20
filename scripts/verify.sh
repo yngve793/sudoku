@@ -16,7 +16,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ONLY="validator,generator,backend,frontend"
+ONLY="validator,generator,vision,backend,frontend"
 E2E=0 FULL=0 DOCKER=0 REPEAT=1
 need_arg() { [[ $# -ge 2 && -n "$2" ]] || { echo "$1 needs a value" >&2; exit 2; }; }
 while [[ $# -gt 0 ]]; do
@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$REPEAT" =~ ^[1-9][0-9]*$ ]] || { echo "--repeat must be an integer >= 1" >&2; exit 2; }
 for area in ${ONLY//,/ }; do
-  case "$area" in validator|generator|backend|frontend) ;;
+  case "$area" in validator|generator|vision|backend|frontend) ;;
     *) echo "unknown area in --only: $area" >&2; exit 2 ;; esac
 done
 has() { [[ ",$ONLY," == *",$1,"* ]]; }
@@ -64,8 +64,14 @@ ensure_node_modules() { [[ -d frontend/node_modules ]] || (cd frontend && npm ci
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/sudoku-verify.XXXXXX")
 PIDS=()
 cleanup() {
-  local p
+  local p i
   for p in "${PIDS[@]:-}"; do [[ -n "$p" ]] && kill "$p" 2>/dev/null || true; done
+  # Wait for graceful shutdown (uvicorn + its worker pool) so ports are free when we exit.
+  for p in "${PIDS[@]:-}"; do
+    [[ -n "$p" ]] || continue
+    for ((i = 0; i < 100; i++)); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+    kill -9 "$p" 2>/dev/null || true
+  done
   if ((${#FAILED[@]})) && compgen -G "$WORK/*.log" >/dev/null; then
     mkdir -p .verify-logs && cp "$WORK"/*.log .verify-logs/ && echo "logs kept in .verify-logs/"
   fi
@@ -74,7 +80,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------- Python packages
-for pkg in validator generator backend; do
+for pkg in validator generator vision backend; do
   has "$pkg" || continue
   step "$pkg"
   run "$pkg ruff" uv run ruff check "$pkg"

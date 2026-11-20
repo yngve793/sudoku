@@ -7,14 +7,15 @@ belongs to someone else, so ids of other users' games are indistinguishable from
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from sudoku_api.domain import Difficulty, GameStatus
+from sudoku_api.domain import Difficulty, GameSource, GameStatus
 from sudoku_api.errors import ApiError, not_found
-from sudoku_api.models import Game, HintEvent, User, utcnow
+from sudoku_api.models import Game, HintEvent, Puzzle, User, utcnow
 from sudoku_api.services import puzzle_logic
 from sudoku_api.services.hints import StagedHint, stage_hint
 from sudoku_api.services.pool import (
@@ -68,6 +69,25 @@ def puzzle_unavailable() -> ApiError:
     return ApiError(503, "puzzle_unavailable", "Could not produce a puzzle, please retry")
 
 
+def abandon_in_progress(session: Session, user: User, now: datetime) -> None:
+    """Abandon the user's in-progress game, if any (one in-progress game per user)."""
+    session.execute(
+        update(Game)
+        .where(Game.user_id == user.id, Game.status == str(GameStatus.in_progress))
+        .values(status=str(GameStatus.abandoned), updated_at=now)
+    )
+
+
+def was_imported(session: Session, puzzle: Puzzle) -> bool:
+    """True if these givens came from a photo: never serve them as a ranked generated game."""
+    if puzzle.source != GameSource.generated:
+        return True
+    imported = select(Game.id).where(
+        Game.puzzle_id == puzzle.id, Game.source == str(GameSource.imported)
+    )
+    return session.scalar(imported.limit(1)) is not None
+
+
 def create_game(
     session: Session,
     user: User,
@@ -84,11 +104,7 @@ def create_game(
     is added to the pool instead of being thrown away.
     """
     now = utcnow()
-    session.execute(
-        update(Game)
-        .where(Game.user_id == user.id, Game.status == str(GameStatus.in_progress))
-        .values(status=str(GameStatus.abandoned), updated_at=now)
-    )
+    abandon_in_progress(session, user, now)
     puzzle = take_from_pool(session, difficulty)
     if puzzle is not None and candidate is not None:
         add_to_pool(session, candidate, generator_version)
@@ -97,15 +113,19 @@ def create_game(
             session.rollback()
             return None
         try:
-            puzzle, _created = store_puzzle(session, candidate, generator_version)
+            puzzle, created = store_puzzle(session, candidate, generator_version)
         except PuzzleRejectedError:
             session.rollback()
             raise puzzle_unavailable() from None
+        if not created and was_imported(session, puzzle):  # givens known from a photo
+            session.rollback()
+            raise puzzle_unavailable()
     game = Game(
         user_id=user.id,
         puzzle_id=puzzle.id,
         puzzle=puzzle,
         status=str(GameStatus.in_progress),
+        source=str(GameSource.generated),
         current=puzzle.givens,
         notes={},
         elapsed_seconds=0,
@@ -118,6 +138,12 @@ def create_game(
     session.add(game)
     session.commit()
     return game
+
+
+def puzzle_difficulty(game: Game) -> Difficulty | None:
+    """The game's level; None for an Unrated imported puzzle."""
+    level = game.puzzle.difficulty
+    return None if level is None else Difficulty(level)
 
 
 def get_game(session: Session, user: User, game_id: int) -> Game:
@@ -274,7 +300,7 @@ def complete_game(
         session.scalars(select(HintEvent.level).where(HintEvent.game_id == game.id)).all()
     )
     breakdown = compute_score(
-        Difficulty(game.puzzle.difficulty),
+        puzzle_difficulty(game),
         game.elapsed_seconds,
         stages,
         game.mistakes,
@@ -307,7 +333,7 @@ def score_breakdown(session: Session, game: Game) -> ScoreBreakdown:
         session.scalars(select(HintEvent.level).where(HintEvent.game_id == game.id)).all()
     )
     return compute_score(
-        Difficulty(game.puzzle.difficulty),
+        puzzle_difficulty(game),
         game.elapsed_seconds,
         stages,
         game.mistakes,

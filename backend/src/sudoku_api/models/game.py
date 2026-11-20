@@ -30,6 +30,11 @@ class Game(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     puzzle_id: Mapped[int] = mapped_column(ForeignKey("puzzles.id"), index=True)
     status: Mapped[str] = mapped_column(String(16))
+    # `generated` | `imported` (GameSource), set when the game starts. Stored per game, not
+    # only per puzzle: an import may reuse a generated puzzle row, and must still never rank.
+    source: Mapped[str] = mapped_column(
+        String(16), default="generated", server_default=text("'generated'")
+    )
     current: Mapped[str] = mapped_column(String(81))
     notes: Mapped[dict[str, list[int]]] = mapped_column(JSON, default=dict)
     elapsed_seconds: Mapped[int] = mapped_column(Integer, default=0)

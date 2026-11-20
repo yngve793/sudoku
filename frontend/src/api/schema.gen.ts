@@ -177,6 +177,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/games/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a game from a reviewed photo import (abandons the current in-progress game)
+         * @description `givens` must be consistent with exactly one solution; `current` holds the handwritten entries and must keep every given. The puzzle is rated server-side (`difficulty` null = Unrated) and an existing identical puzzle is reused. Error codes (422): `givens_modified`, `puzzle_inconsistent`, `no_solution`, `multiple_solutions`, `validation_error`; 429 `rate_limited` (`IMPORT_GAME_RATE_LIMIT`). The game has `source: imported` and never appears on the leaderboard.
+         */
+        post: operations["import_game_api_v1_games_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/games/{game_id}": {
         parameters: {
             query?: never;
@@ -289,6 +309,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Live check of a reviewed board: consistency, solution count and rating
+         * @description Never returns the solution. `solution_count` and the rating use the givens only; `consistent`/`contradiction` use `current`. Error codes: 422 `givens_modified` (`current` changes a given) or `validation_error`; 429 `rate_limited`.
+         */
+        post: operations["check_api_v1_imports_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/recognize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recognise a Sudoku grid (printed givens and handwritten entries) in a photo
+         * @description Multipart upload. The photo is processed in memory and never stored or logged. Error codes: 413 `image_too_large` (over 10 MB or 40 MP); 415 `unsupported_image` (not JPEG/PNG/WebP); 422 `image_unreadable`, `no_grid_found` or `validation_error` (e.g. malformed `corners`); 429 `rate_limited` (`IMPORT_RATE_LIMIT`); 503 `recognition_unavailable` (timeout or worker failure).
+         */
+        post: operations["recognize_api_v1_imports_recognize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/leaderboard": {
         parameters: {
             query?: never;
@@ -378,6 +438,37 @@ export interface components {
             /** Score */
             score: number;
         };
+        /** CellReadingOut */
+        CellReadingOut: {
+            /**
+             * Alternatives
+             * @description Top-3 candidates, best first (empty for empty cells)
+             */
+            alternatives: components["schemas"]["DigitAlternative"][];
+            /**
+             * Auto Corrected
+             * @description True if constraint correction replaced the model's top digit (givens only)
+             */
+            auto_corrected: boolean;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Digit
+             * @description 0 = empty
+             */
+            digit: number;
+            /**
+             * Index
+             * @description Cell index, row-major
+             */
+            index: number;
+            /**
+             * Kind
+             * @description `given` = printed, `handwritten` = player's entry
+             * @enum {string}
+             */
+            kind: "empty" | "given" | "handwritten";
+        };
         /** CheckIn */
         CheckIn: {
             /**
@@ -404,7 +495,8 @@ export interface components {
             completed_at: string | null;
             /** Current */
             current: string;
-            difficulty: components["schemas"]["Difficulty"];
+            /** @description Rated difficulty; null only for imported puzzles that are Unrated */
+            difficulty: components["schemas"]["Difficulty"] | null;
             /** Elapsed Seconds */
             elapsed_seconds: number;
             /** Givens */
@@ -426,6 +518,8 @@ export interface components {
             search_costs: components["schemas"]["SearchCosts"];
             /** @description The saved search-mode tree, if any */
             search_tree: components["schemas"]["SearchTree"] | null;
+            /** @description `imported` games are excluded from the leaderboard */
+            source: components["schemas"]["GameSource"];
             /**
              * Started At
              * Format: date-time
@@ -467,6 +561,16 @@ export interface components {
          * @enum {string}
          */
         Difficulty: "beginner" | "easy" | "medium" | "hard" | "expert" | "master" | "extreme";
+        /** DigitAlternative */
+        DigitAlternative: {
+            /** Digit */
+            digit: number;
+            /**
+             * P
+             * @description Model probability for this digit
+             */
+            p: number;
+        };
         /** EmailIn */
         EmailIn: {
             /**
@@ -496,7 +600,8 @@ export interface components {
             completed_at: string | null;
             /** Current */
             current: string;
-            difficulty: components["schemas"]["Difficulty"];
+            /** @description Rated difficulty; null only for imported puzzles that are Unrated */
+            difficulty: components["schemas"]["Difficulty"] | null;
             /** Elapsed Seconds */
             elapsed_seconds: number;
             /** Givens */
@@ -517,6 +622,8 @@ export interface components {
             search_costs: components["schemas"]["SearchCosts"];
             /** @description The saved search-mode tree, if any */
             search_tree: components["schemas"]["SearchTree"] | null;
+            /** @description `imported` games are excluded from the leaderboard */
+            source: components["schemas"]["GameSource"];
             /**
              * Started At
              * Format: date-time
@@ -531,6 +638,12 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * GameSource
+         * @description Where a game's puzzle came from. Imported games never reach the leaderboard.
+         * @enum {string}
+         */
+        GameSource: "generated" | "imported";
         /**
          * GameStatus
          * @enum {string}
@@ -611,6 +724,55 @@ export interface components {
             technique: string | null;
             /** Value */
             value: number | null;
+        };
+        /** ImageSize */
+        ImageSize: {
+            /** Height */
+            height: number;
+            /** Width */
+            width: number;
+        };
+        /**
+         * ImportBoardIn
+         * @description The reviewed board. `current` must keep every given (422 `givens_modified`).
+         */
+        ImportBoardIn: {
+            /**
+             * Current
+             * @description Givens plus handwritten entries, 0 = empty
+             */
+            current: string;
+            /**
+             * Givens
+             * @description Printed digits only, 0 = empty
+             */
+            givens: string;
+        };
+        /**
+         * ImportCheckOut
+         * @description Live feedback while reviewing. Deliberately has no `solution` field.
+         */
+        ImportCheckOut: {
+            /**
+             * Consistent
+             * @description No duplicate digit in any row, column or box of `current`, and no cell without candidates
+             */
+            consistent: boolean;
+            /** @description The first constraint violation in `current` (null when consistent) */
+            contradiction: components["schemas"]["Contradiction"] | null;
+            /** @description Rated difficulty of the givens; null when not uniquely solvable or when the puzzle needs techniques beyond the rated set (shown as Unrated) */
+            difficulty: components["schemas"]["Difficulty"] | null;
+            /**
+             * Rating Score
+             * @description Raw rating score of the givens; null when not uniquely solvable
+             */
+            rating_score: number | null;
+            /**
+             * Solution Count
+             * @description Solutions of the givens alone: 0, 1, or 2 meaning two or more
+             * @enum {integer}
+             */
+            solution_count: 0 | 1 | 2;
         };
         /**
          * LeaderboardEntry
@@ -733,6 +895,47 @@ export interface components {
             /** Value */
             value: number;
         };
+        /**
+         * RecognitionOut
+         * @description What the photo shows. Never contains a solution.
+         */
+        RecognitionOut: {
+            /** Cells */
+            cells: components["schemas"]["CellReadingOut"][];
+            /**
+             * Corners
+             * @description Detected (or supplied) grid corners: TL, TR, BR, BL
+             */
+            corners: [
+                number,
+                number
+            ][];
+            /** Grid Confidence */
+            grid_confidence: number;
+            /** @description Size of the EXIF-oriented input image */
+            image_size: components["schemas"]["ImageSize"];
+            /**
+             * Warnings
+             * @description Human-readable, e.g. "givens have multiple solutions"
+             */
+            warnings: string[];
+        };
+        /**
+         * RecognizeImportForm
+         * @description `multipart/form-data` body of `POST /imports/recognize`.
+         */
+        RecognizeImportForm: {
+            /**
+             * Corners
+             * @description Optional manual grid corners overriding detection: a JSON array of four `[x, y]` pairs in the order top-left, top-right, bottom-right, bottom-left, in pixels of the EXIF-oriented image (the `corners` of a previous `RecognitionOut` has this shape). Example: `[[12,8],[980,15],[990,970],[5,960]]`. A malformed value returns 422 `validation_error`.
+             */
+            corners?: string | null;
+            /**
+             * File
+             * @description The photo: JPEG, PNG or WebP, at most 10 MB and 40 megapixels.
+             */
+            file: string;
+        };
         /** RegisterIn */
         RegisterIn: {
             /**
@@ -773,7 +976,8 @@ export interface components {
         ScoreHistoryItem: {
             /** Completed At */
             completed_at: string | null;
-            difficulty: components["schemas"]["Difficulty"];
+            /** @description null only for Unrated imported puzzles */
+            difficulty: components["schemas"]["Difficulty"] | null;
             /** Elapsed Seconds */
             elapsed_seconds: number;
             /** Game Id */
@@ -784,6 +988,7 @@ export interface components {
             mistakes: number;
             /** Score */
             score: number | null;
+            source: components["schemas"]["GameSource"];
             /**
              * Started At
              * Format: date-time
@@ -1416,6 +1621,57 @@ export interface operations {
             };
         };
     };
+    import_game_api_v1_games_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportBoardIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GameOut"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
     get_game_api_v1_games__game_id__get: {
         parameters: {
             query?: never;
@@ -1818,6 +2074,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthOut"];
+                };
+            };
+        };
+    };
+    check_api_v1_imports_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportBoardIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportCheckOut"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    recognize_api_v1_imports_recognize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["RecognizeImportForm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecognitionOut"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unsupported media type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
         };

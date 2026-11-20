@@ -3,6 +3,7 @@ import { cleanup } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 import { apiUrl, setSession } from '../api/client'
 import { resetMockDb } from '../mocks/db'
+import { resetImportSimulation } from '../mocks/imports'
 import { server } from '../mocks/node'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -13,6 +14,7 @@ afterEach(async () => {
   // endpoint expires the refresh cookie so sessions don't leak between tests.
   await fetch(apiUrl('/auth/logout'), { method: 'POST', credentials: 'include' })
   resetMockDb()
+  resetImportSimulation()
   setSession(null)
 })
 afterAll(() => server.close())

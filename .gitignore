@@ -27,3 +27,5 @@ frontend/test-results/
 .claude/settings.local.json
 # verify.sh failure logs
 .verify-logs/
+# vision training downloads (datasets, fonts)
+vision/.cache/

@@ -8,9 +8,9 @@ from fastapi import APIRouter, Body, Depends, status
 from fastapi.concurrency import run_in_threadpool
 
 from sudoku_api.deps import CurrentUserDep, DbDep, PuzzleGeneratorDep, SettingsDep
-from sudoku_api.domain import Difficulty, GameStatus
+from sudoku_api.domain import GameSource, GameStatus
 from sudoku_api.models import Game
-from sudoku_api.ratelimit import hint_rate_limit, search_rate_limit
+from sudoku_api.ratelimit import hint_rate_limit, import_game_rate_limit, search_rate_limit
 from sudoku_api.schemas.common import error_responses
 from sudoku_api.schemas.game import (
     CheckIn,
@@ -24,6 +24,7 @@ from sudoku_api.schemas.game import (
     NewGameIn,
     ScoreBreakdownOut,
 )
+from sudoku_api.schemas.imports import ImportBoardIn
 from sudoku_api.schemas.search import (
     Contradiction,
     PropagateIn,
@@ -33,6 +34,7 @@ from sudoku_api.schemas.search import (
     SearchTree,
 )
 from sudoku_api.services import games as game_service
+from sudoku_api.services import imports as import_service
 from sudoku_api.services.games import BoardUpdate
 from sudoku_api.services.puzzle_source import PuzzleSourceError
 from sudoku_api.services.scoring import AUTO_PLACEMENT_PENALTY, hint_cost
@@ -46,7 +48,8 @@ def game_out(game: Game) -> GameOut:
     """Map an ORM game to the public shape. The solution is never copied."""
     return GameOut(
         id=game.id,
-        difficulty=Difficulty(game.puzzle.difficulty),
+        difficulty=game_service.puzzle_difficulty(game),
+        source=GameSource(game.source),
         status=GameStatus(game.status),
         givens=game.puzzle.givens,
         current=game.current,
@@ -112,6 +115,42 @@ async def create_game(
             )
         )
         assert game is not None
+    return game_out(game)
+
+
+@router.post(
+    "/import",
+    status_code=status.HTTP_201_CREATED,
+    response_model=GameOut,
+    responses=error_responses(429),
+    dependencies=[Depends(import_game_rate_limit)],
+    summary="Start a game from a reviewed photo import (abandons the current in-progress game)",
+    description=(
+        "`givens` must be consistent with exactly one solution; `current` holds the "
+        "handwritten entries and must keep every given. The puzzle is rated server-side "
+        "(`difficulty` null = Unrated) and an existing identical puzzle is reused. Error "
+        "codes (422): `givens_modified`, `puzzle_inconsistent`, `no_solution`, "
+        "`multiple_solutions`, `validation_error`; 429 `rate_limited` "
+        "(`IMPORT_GAME_RATE_LIMIT`). The game has `source: imported` and "
+        "never appears on the leaderboard."
+    ),
+)
+async def import_game(
+    body: ImportBoardIn,
+    db: DbDep,
+    user: CurrentUserDep,
+    runner: PuzzleGeneratorDep,
+    settings: SettingsDep,
+) -> GameOut:
+    await run_in_threadpool(import_service.validate_import_board, body.givens, body.current)
+    rating = None
+    if await run_in_threadpool(import_service.needs_rating, db, body.givens):
+        rating = await import_service.rate_import(
+            runner, body.givens, settings.import_rating_timeout_seconds
+        )
+    game = await run_in_threadpool(
+        import_service.import_game, db, user, body.givens, body.current, rating
+    )
     return game_out(game)
 
 

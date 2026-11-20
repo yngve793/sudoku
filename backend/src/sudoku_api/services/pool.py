@@ -61,6 +61,9 @@ def _insert_ignoring_duplicates(session: Session, values: dict[str, Any]) -> int
         return None
 
 
+insert_puzzle_ignoring_duplicates = _insert_ignoring_duplicates
+
+
 def store_puzzle(
     session: Session, candidate: SourcePuzzle, generator_version: str
 ) -> tuple[Puzzle, bool]:

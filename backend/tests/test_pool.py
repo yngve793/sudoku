@@ -8,6 +8,7 @@ import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -31,6 +32,7 @@ from sudoku_api.services.puzzle_source import (
     PuzzleGenerationError,
     SourcePuzzle,
 )
+from sudoku_api.workers import pool as pool_worker
 from sudoku_api.workers.pool import refill_pool_async, run_pool_worker
 
 from tests.conftest import API, make_account, make_settings
@@ -276,22 +278,33 @@ def test_generator_timeout_becomes_source_error(monkeypatch: pytest.MonkeyPatch)
     asyncio.run(scenario())
 
 
-def test_async_refill_and_worker(app: FastAPI) -> None:
+def test_async_refill_and_worker(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deterministic: waits for the worker's first completed pass (an event), not wall time."""
     gen = PuzzleGenerator(FixturePuzzleSource(seed=4))
+    passes: list[dict[Difficulty, int]] = []
 
     async def scenario() -> None:
         added = await refill_pool_async(app.state.session_factory, gen, 1)
         assert added == dict.fromkeys(Difficulty, 1)
-        task = asyncio.create_task(run_pool_worker(app.state.session_factory, gen, 2, 0.01))
-        for _ in range(300):
-            await asyncio.sleep(0.01)
-            if _pool_total(app) == 2 * len(Difficulty):
-                break
+
+        pass_done = asyncio.Event()
+
+        async def observed_refill(*args: Any, **kwargs: Any) -> dict[Difficulty, int]:
+            result = await refill_pool_async(*args, **kwargs)
+            passes.append(result)
+            pass_done.set()
+            return result
+
+        monkeypatch.setattr(pool_worker, "refill_pool_async", observed_refill)
+        task = asyncio.create_task(run_pool_worker(app.state.session_factory, gen, 2, 3600))
+        # Hang guard only; the event fires as soon as the first pass completes.
+        await asyncio.wait_for(pass_done.wait(), timeout=120)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
     asyncio.run(scenario())
+    assert passes == [dict.fromkeys(Difficulty, 1)]
     assert _pool_total(app) == 2 * len(Difficulty)
 
 

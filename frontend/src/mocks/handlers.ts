@@ -29,6 +29,17 @@ import {
 } from './db'
 import { makePuzzle, mockHint } from './puzzles'
 import { mockPropagate } from './propagate'
+import { findContradiction } from '../features/search/constraints'
+import {
+  mockRating,
+  mockRecognition,
+  parseCornersField,
+  polygonArea,
+  simulatedError,
+  sniffImage,
+  type ImportEndpoint,
+} from './imports'
+import { countSolutions } from './solver'
 
 const API = '*/api/v1'
 const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/
@@ -148,6 +159,7 @@ function rankedEntries(difficulty: Difficulty | null, period: LeaderboardPeriod)
       (g) =>
         g.status === 'completed' &&
         g.score !== null &&
+        g.source !== 'imported' &&
         (difficulty === null || g.difficulty === difficulty) &&
         verified.has(g.user_id) &&
         Date.parse(g.completed_at ?? '') >= since,
@@ -161,7 +173,7 @@ function rankedEntries(difficulty: Difficulty | null, period: LeaderboardPeriod)
     .map((g, i) => ({
       rank: i + 1,
       username: verified.get(g.user_id)!.username,
-      difficulty: g.difficulty,
+      difficulty: g.difficulty!,
       score: g.score ?? 0,
       elapsed_seconds: g.elapsed_seconds,
       hints_used: g.hints_used,
@@ -214,7 +226,9 @@ function userStats(user: MockUser): Me['stats'] {
   const games = db.games.filter((g) => g.user_id === user.id)
   const completed = games.filter((g) => g.status === 'completed')
   const best: Record<string, number> = {}
-  for (const g of completed) best[g.difficulty] = Math.max(best[g.difficulty] ?? 0, g.score ?? 0)
+  // Unrated imports count towards the totals but have no per-difficulty best.
+  for (const g of completed)
+    if (g.difficulty) best[g.difficulty] = Math.max(best[g.difficulty] ?? 0, g.score ?? 0)
   return {
     games_started: games.length,
     games_completed: completed.length,
@@ -349,6 +363,39 @@ function searchTreeProblem(tree: unknown): string | null {
     return `${w}: Value error, the search tree is too large`
   return null
 }
+
+const IMAGE_ERRORS = {
+  unsupported_image: [415, 'Unsupported image type; use JPEG, PNG or WebP'],
+  image_too_large: [413, 'The image is too large (at most 10 MB and 40 megapixels)'],
+  image_unreadable: [422, 'The image could not be read'],
+} as const
+
+function simulated(endpoint: ImportEndpoint) {
+  const e = simulatedError(endpoint)
+  return e ? err(e.status, e.code, e.detail ?? `Simulated ${e.code}`) : null
+}
+
+/** Mirrors ImportBoardIn validation plus the shared `givens_modified` rule. */
+async function importBoard(
+  request: StrictRequest<DefaultBodyType>,
+): Promise<{ givens: string; current: string } | Response> {
+  const body = await json<{ givens: string; current: string }>(request)
+  const problems: string[] = []
+  for (const field of ['givens', 'current'] as const) {
+    const value = body[field]
+    if (value === undefined) problems.push(`${field}: Field required`)
+    else if (typeof value !== 'string' || !GRID_RE.test(value))
+      problems.push(`${field}: String should match pattern '^[0-9]{81}$'`)
+  }
+  if (problems.length) return validation(...problems)
+  const givens = body.givens!
+  const current = body.current!
+  if ([...givens].some((g, i) => g !== '0' && current[i] !== g))
+    return err(422, 'givens_modified', 'The board must keep every given')
+  return { givens, current }
+}
+
+const toCells = (grid: string) => [...grid].map(Number)
 
 export const handlers = [
   // Latency for the browser dev server; falls through to the real handler.
@@ -510,6 +557,98 @@ export const handlers = [
       givens: puzzle.givens,
       solution: puzzle.solution,
       current: puzzle.givens,
+      notes: {},
+      elapsed_seconds: 0,
+      hints_used: 0,
+      hint_stages: [],
+      mistakes: 0,
+      score: null,
+      version: 1,
+      started_at: now,
+      updated_at: now,
+      completed_at: null,
+    }
+    db.games.push(game)
+    saveDb()
+    return HttpResponse.json(toWireGame(game), { status: 201 })
+  }),
+
+  // ---------- photo import (PLAN.md §5.6) ----------
+  http.post(`${API}/imports/recognize`, async ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const fail = simulated('recognize')
+    if (fail) return fail
+    let form: FormData
+    try {
+      form = await request.formData()
+    } catch {
+      return validation('file: Field required')
+    }
+    const file = form.get('file')
+    if (!file || typeof file === 'string') return validation('file: Field required')
+    const rawCorners = form.get('corners')
+    let corners = null
+    if (typeof rawCorners === 'string' && rawCorners !== '') {
+      const parsed = parseCornersField(rawCorners)
+      if (typeof parsed === 'string') return validation(parsed)
+      corners = parsed
+    }
+    const sniffed = sniffImage(new Uint8Array(await file.arrayBuffer()))
+    if (!sniffed.ok) {
+      const [status, detail] = IMAGE_ERRORS[sniffed.code]
+      return err(status, sniffed.code, detail)
+    }
+    // Corners enclosing (almost) nothing: nothing to straighten.
+    if (corners && polygonArea(corners) < 0.01 * sniffed.width * sniffed.height)
+      return err(422, 'no_grid_found', 'No Sudoku grid was found inside the given corners')
+    return HttpResponse.json(mockRecognition(sniffed.width, sniffed.height, corners))
+  }),
+
+  http.post(`${API}/imports/check`, async ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const fail = simulated('check')
+    if (fail) return fail
+    const board = await importBoard(request)
+    if (board instanceof Response) return board
+    const contradiction = findContradiction(toCells(board.current))
+    // Solution count and rating use the givens only (never leaks via `current`).
+    const { count } = countSolutions(toCells(board.givens), 2)
+    const rating = count === 1 ? mockRating(board.givens) : null
+    return HttpResponse.json({
+      consistent: contradiction === null,
+      contradiction,
+      solution_count: count as 0 | 1 | 2,
+      difficulty: rating?.difficulty ?? null,
+      rating_score: rating?.score ?? null,
+    })
+  }),
+
+  http.post(`${API}/games/import`, async ({ request }) => {
+    const user = currentUser(request)
+    if (!user) return unauthorized(request)
+    const fail = simulated('import')
+    if (fail) return fail
+    const board = await importBoard(request)
+    if (board instanceof Response) return board
+    if (findContradiction(toCells(board.givens)))
+      return err(422, 'puzzle_inconsistent', 'The givens contradict each other')
+    const { count, solution } = countSolutions(toCells(board.givens), 2)
+    if (count === 0 || !solution) return err(422, 'no_solution', 'The givens have no solution')
+    if (count > 1) return err(422, 'multiple_solutions', 'The givens have more than one solution')
+    for (const g of db.games)
+      if (g.user_id === user.id && g.status === 'in_progress') g.status = 'abandoned'
+    const now = new Date().toISOString()
+    const game: MockGame = {
+      id: nextId(),
+      user_id: user.id,
+      difficulty: mockRating(board.givens).difficulty,
+      source: 'imported',
+      status: 'in_progress',
+      givens: board.givens,
+      solution: solution.join(''),
+      current: board.current,
       notes: {},
       elapsed_seconds: 0,
       hints_used: 0,
@@ -695,6 +834,7 @@ export const handlers = [
       .map((g) => ({
         game_id: g.id,
         difficulty: g.difficulty,
+        source: g.source ?? 'generated',
         status: g.status,
         score: g.score,
         elapsed_seconds: g.elapsed_seconds,

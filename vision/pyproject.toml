@@ -1,0 +1,29 @@
+[project]
+name = "sudoku-vision"
+version = "0.1.0"
+description = "Recognize a Sudoku puzzle (printed givens and handwritten entries) in a photo"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.5",
+    "onnxruntime>=1.32.0",
+    "opencv-python-headless>=5.1.0.95",
+    "pillow>=13.0.0",
+    "sudoku-validator",
+]
+
+[tool.uv.sources]
+sudoku-validator = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+train = [
+    "onnx>=1.23.2",
+    "torch>=2.15.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sudoku_vision"]
+artifacts = ["src/sudoku_vision/models/*"]

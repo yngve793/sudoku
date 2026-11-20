@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request, Response
 
 from sudoku_api.deps import CurrentUserDep, DbDep, SettingsDep
-from sudoku_api.domain import Difficulty, GameStatus, LeaderboardPeriod
+from sudoku_api.domain import Difficulty, GameSource, GameStatus, LeaderboardPeriod
 from sudoku_api.schemas.common import error_responses
 from sudoku_api.schemas.scores import (
     BestScore,
@@ -90,7 +90,8 @@ def my_scores(
     history = [
         ScoreHistoryItem(
             game_id=g.id,
-            difficulty=Difficulty(g.puzzle.difficulty),
+            difficulty=None if g.puzzle.difficulty is None else Difficulty(g.puzzle.difficulty),
+            source=GameSource(g.source),
             status=GameStatus(g.status),
             score=g.score,
             elapsed_seconds=g.elapsed_seconds,
